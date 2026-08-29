@@ -1,0 +1,14 @@
+.git
+.github
+.ht-data
+.env
+node_modules
+coverage
+release
+*.log
+*.sqlite
+*.sqlite3
+credentials.key
+BUILD_INFO.json
+QUALITY_REPORT.*
+SBOM.cdx.json

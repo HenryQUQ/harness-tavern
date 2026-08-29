@@ -1,0 +1,37 @@
+{
+  "chat_completion_source": "openai",
+  "openai_model": "gpt-4-turbo",
+  "temperature": 0.92,
+  "top_p": 0.95,
+  "top_k": 40,
+  "min_p": 0.05,
+  "frequency_penalty": 0.1,
+  "presence_penalty": 0,
+  "repetition_penalty": 1.05,
+  "reasoning_effort": "high",
+  "seed": -1,
+  "openai_max_tokens": 2048,
+  "openai_max_context": 32768,
+  "prompts": [
+    {
+      "identifier": "main",
+      "name": "Main Prompt",
+      "role": "system",
+      "content": "Write vivid, coherent roleplay for {{char}} while leaving {{user}} in control."
+    },
+    {
+      "identifier": "chatHistory",
+      "name": "Chat History",
+      "marker": true
+    }
+  ],
+  "prompt_order": [
+    {
+      "character_id": 100001,
+      "order": [
+        { "identifier": "main", "enabled": true },
+        { "identifier": "chatHistory", "enabled": true }
+      ]
+    }
+  ]
+}

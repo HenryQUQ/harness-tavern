@@ -1,0 +1,33 @@
+services:
+  tavern:
+    build:
+      context: .
+    image: harness-tavern:0.12.0
+    restart: unless-stopped
+    init: true
+    read_only: true
+    ports:
+      - "${HT_BIND_ADDRESS:-127.0.0.1}:${HT_PORT:-8787}:8787"
+    environment:
+      HT_HOST: 0.0.0.0
+      HT_PORT: 8787
+      HT_DATA_DIR: /data
+      HT_ACCESS_TOKEN: "${HT_ACCESS_TOKEN:?Set HT_ACCESS_TOKEN to a long random value}"
+      HT_PUBLIC_URL: "${HT_PUBLIC_URL:-http://127.0.0.1:8787}"
+      HT_TRUST_PROXY: "${HT_TRUST_PROXY:-false}"
+      HT_LOG_LEVEL: "${HT_LOG_LEVEL:-info}"
+    volumes:
+      - tavern-data:/data
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health', { headers: { 'x-harness-tavern-token': process.env.HT_ACCESS_TOKEN || '' } }).then(response => { if (!response.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  tavern-data:

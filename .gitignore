@@ -1,0 +1,25 @@
+.ht-data/
+node_modules/
+coverage/
+release/*
+!release/.gitkeep
+*.log
+.DS_Store
+
+# Local runtime state and credentials
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+credentials.key
+
+# Editors and local tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+
+__pycache__/
+*.pyc

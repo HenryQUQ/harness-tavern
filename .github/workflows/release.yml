@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*.*.*
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build verified release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CI: true
+      TZ: UTC
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use pinned Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install from lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Build and cold-test release artifacts
+        run: npm run release
+
+      - name: Publish GitHub Release
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release/*
+          --verify-tag
+          --generate-notes
+          --title "Harness Tavern $GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}

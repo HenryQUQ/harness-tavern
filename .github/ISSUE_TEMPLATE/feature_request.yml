@@ -1,0 +1,41 @@
+name: Feature request
+description: Propose a scoped product or engineering improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or maintainer problem should be solved?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the experience or contract, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Primary area
+      options:
+        - Player experience
+        - Creator experience
+        - AI providers and presets
+        - Sharing and portability
+        - Runtime and persistence
+        - Operations and delivery
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Privacy, compatibility, or migration considerations

@@ -1,0 +1,41 @@
+{
+  "name": "harness-tavern",
+  "version": "0.12.0",
+  "private": true,
+  "type": "module",
+  "description": "A nontechnical, shareable and extensible Tavern for persistent character chat and roleplay.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HenryQUQ/harness-tavern.git"
+  },
+  "homepage": "https://github.com/HenryQUQ/harness-tavern#readme",
+  "bugs": {
+    "url": "https://github.com/HenryQUQ/harness-tavern/issues"
+  },
+  "keywords": [
+    "character-chat",
+    "roleplay",
+    "llm",
+    "sillytavern",
+    "deepseek"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "packageManager": "npm@10.9.3",
+  "scripts": {
+    "start": "node src/main.js serve",
+    "dev": "HT_LOG_LEVEL=debug node --watch src/main.js serve",
+    "check": "node scripts/check-source.js",
+    "test": "node --test --test-reporter=spec tests/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage '--test-coverage-include=src/**/*.js' --test-coverage-lines=85 --test-coverage-functions=80 --test-coverage-branches=65 tests/*.test.js",
+    "verify:journey": "node scripts/verify-user-journey.js",
+    "ci": "npm run check && npm run test:coverage && npm run verify:journey",
+    "verify": "npm run ci && npm run doctor",
+    "audit": "npm audit --audit-level=high",
+    "doctor": "node src/main.js doctor",
+    "seed": "node src/main.js seed --force",
+    "release": "node scripts/build-release.js"
+  }
+}

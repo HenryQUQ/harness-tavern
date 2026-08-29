@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CI: true
+      TZ: UTC
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use pinned Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install from lockfile
+        run: npm ci --ignore-scripts
+
+      - name: Check source and repository policy
+        run: npm run check
+
+      - name: Run tests with coverage thresholds
+        run: npm run test:coverage
+
+      - name: Verify the fresh-user journey
+        run: npm run verify:journey
+
+      - name: Verify an isolated database
+        run: npm run doctor
+        env:
+          HT_DATA_DIR: ${{ runner.temp }}/harness-tavern-doctor
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
