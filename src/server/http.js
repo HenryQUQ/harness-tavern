@@ -6,6 +6,7 @@ import { constantTimeEqual, id } from '../util.js'
 import { reduceEvents } from '../domain/projection.js'
 import { buildPlayerJournal } from '../domain/journal.js'
 import { THINKING_INTENSITIES } from '../runtime/thinking.js'
+import { isStorySourceInput } from '../story/source.js'
 import { PRODUCT_NAME, PRODUCT_VERSION } from '../version.js'
 
 const PUBLIC_DIR = fileURLToPath(new URL('../../public', import.meta.url))
@@ -173,6 +174,7 @@ function publicBootstrap(app) {
       'playthroughs',
       'player-journal',
       'portable-sharing',
+      'editable-story-sources',
       'public-preview-links',
       'remix-links',
       'declarative-extensions',
@@ -274,6 +276,7 @@ export function createHttpServer(app) {
           extensions: app.extensions.list(),
           contributions: app.extensions.contributions(),
           imports: app.repository.listImports(),
+          story_sources: app.storySources.listBindings(),
         })
       }
 
@@ -284,6 +287,11 @@ export function createHttpServer(app) {
       if (method === 'GET' && (params = matchPath(pathname, '/api/stories/:id'))) {
         const story = app.repository.getStory(params.id)
         return sendJson(response, 200, playerStory(story, app.repository.listPlaythroughs(story.id)))
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/story-sources/:id'))) return sendJson(response, 200, app.storySources.get(params.id))
+      if (method === 'PUT' && (params = matchPath(pathname, '/api/story-sources/:id'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        return sendJson(response, 200, app.storySources.save(params.id, input.source ?? input, { expectedDigest: input.expected_digest }))
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/conversations/:id'))) return sendJson(response, 200, conversationView(app, params.id))
       if (method === 'GET' && (params = matchPath(pathname, '/api/creator/conversations/:id/inspect'))) return sendJson(response, 200, conversationView(app, params.id, { creator: true }))
@@ -351,7 +359,11 @@ export function createHttpServer(app) {
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/exports/stories/:id'))) {
         const story = app.repository.getStory(params.id)
-        return sendJsonDownload(response, app.sharing.exportStory(params.id), story.slug)
+        const content = url.searchParams.get('format') === 'source'
+          ? app.storySources.get(params.id).source
+          : app.sharing.exportStory(params.id)
+        const filename = url.searchParams.get('format') === 'source' ? `${story.slug}.story.tavern` : story.slug
+        return sendJsonDownload(response, content, filename)
       }
       if (method === 'GET' && pathname === '/api/exports/library') {
         const profile = app.repository.getUserProfile()
@@ -371,7 +383,8 @@ export function createHttpServer(app) {
         return sendJson(response, 200, app.shareLinks.list({ resource_type: url.searchParams.get('resource_type'), resource_id: url.searchParams.get('resource_id') }))
       }
       if (method === 'POST' && (params = matchPath(pathname, '/api/shares/:token/import'))) {
-        return sendJson(response, 201, app.shareLinks.import(params.token, await bodyJson(request, app.config.requestBodyLimit)))
+        const imported = app.shareLinks.import(params.token, await bodyJson(request, app.config.requestBodyLimit))
+        return sendJson(response, 201, imported)
       }
       if (method === 'DELETE' && (params = matchPath(pathname, '/api/shares/:tokenHash'))) {
         return sendJson(response, 200, app.shareLinks.revoke(params.tokenHash))
@@ -382,10 +395,17 @@ export function createHttpServer(app) {
         return sendJson(response, 201, app.shareLinks.create({ resource_type: input.resource_type ?? input.entity_type, resource_id: input.resource_id ?? input.entity_id, scope: input.scope ?? 'remix', expires_in_days: input.expires_in_days }))
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/share-links/:token'))) return sendJson(response, 200, app.shareLinks.getPublic(params.token).snapshot)
-      if (method === 'POST' && pathname === '/api/import/preview') return sendJson(response, 200, app.sharing.preview((await bodyJson(request, app.config.requestBodyLimit)).content))
+      if (method === 'POST' && pathname === '/api/import/preview') {
+        const content = (await bodyJson(request, app.config.requestBodyLimit)).content
+        return sendJson(response, 200, isStorySourceInput(content) ? app.storySources.preview(content) : app.sharing.preview(content))
+      }
       if (method === 'POST' && pathname === '/api/import/apply') {
         const input = await bodyJson(request, app.config.requestBodyLimit)
-        return sendJson(response, 201, app.sharing.import(input.content, { strategy: input.strategy, source_name: input.source_name }))
+        if (isStorySourceInput(input.content)) {
+          return sendJson(response, 201, app.storySources.import(input.content, { strategy: input.strategy, sourceName: input.source_name }))
+        }
+        const imported = app.sharing.import(input.content, { strategy: input.strategy, source_name: input.source_name })
+        return sendJson(response, 201, imported)
       }
 
       if (method === 'GET' && pathname === '/api/extensions') return sendJson(response, 200, { extensions: app.extensions.list(), contributions: app.extensions.contributions() })
@@ -448,18 +468,23 @@ export function createHttpServer(app) {
       }
 
       if (method === 'POST' && pathname === '/api/characters') return sendJson(response, 201, app.repository.createCharacter(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'PATCH' && (params = matchPath(pathname, '/api/characters/:id'))) return sendJson(response, 200, app.repository.updateCharacter(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'PATCH' && (params = matchPath(pathname, '/api/characters/:id'))) {
+        return sendJson(response, 200, app.storySources.updateRuntimeCharacter(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      }
       if (method === 'DELETE' && (params = matchPath(pathname, '/api/characters/:id'))) {
         app.repository.deleteCharacter(params.id)
         return sendJson(response, 200, { deleted: true })
       }
       if (method === 'POST' && pathname === '/api/personas') return sendJson(response, 201, app.repository.createPersona(await bodyJson(request, app.config.requestBodyLimit)))
       if (method === 'PATCH' && (params = matchPath(pathname, '/api/personas/:id'))) return sendJson(response, 200, app.repository.updatePersona(params.id, await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && pathname === '/api/stories') return sendJson(response, 201, app.repository.createStory(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'PATCH' && (params = matchPath(pathname, '/api/stories/:id'))) return sendJson(response, 200, app.repository.updateStory(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'POST' && pathname === '/api/stories') {
+        return sendJson(response, 201, app.storySources.createRuntimeStory(await bodyJson(request, app.config.requestBodyLimit)))
+      }
+      if (method === 'PATCH' && (params = matchPath(pathname, '/api/stories/:id'))) {
+        return sendJson(response, 200, app.storySources.updateRuntimeStory(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      }
       if (method === 'DELETE' && (params = matchPath(pathname, '/api/stories/:id'))) {
-        app.repository.deleteStory(params.id)
-        return sendJson(response, 200, { deleted: true })
+        return sendJson(response, 200, app.storySources.remove(params.id))
       }
 
       if (pathname.startsWith('/api/')) return sendJson(response, 404, { error: { code: 'not_found', message: 'API route not found' }, request_id: requestId })

@@ -14,6 +14,7 @@ export function loadConfig(env = process.env) {
     dataDir,
     databasePath: resolve(env.HT_DATABASE_PATH || `${dataDir}/tavern.sqlite3`),
     keyPath: resolve(env.HT_KEY_PATH || `${dataDir}/credentials.key`),
+    storySourceDir: resolve(env.HT_STORY_SOURCE_DIR || `${dataDir}/stories`),
     host,
     port,
     publicUrl: env.HT_PUBLIC_URL || `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`,

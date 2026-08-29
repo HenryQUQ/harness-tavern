@@ -36,6 +36,12 @@
     "audit": "npm audit --audit-level=high",
     "doctor": "node src/main.js doctor",
     "seed": "node src/main.js seed --force",
+    "story:validate": "node scripts/story-source.js validate",
+    "story:import": "node scripts/story-source.js import",
+    "story:export": "node scripts/story-source.js export",
     "release": "node scripts/build-release.js"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
   }
 }

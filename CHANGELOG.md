@@ -8,6 +8,7 @@ All notable changes are documented here. The format follows Keep a Changelog, an
 
 - Enterprise repository governance, reproducible quality gates, container packaging, and GitHub automation.
 - Expanded LLM generation presets, provider-specific options, reasoning strength, and preview-first SillyTavern preset import.
+- Canonical `harness-tavern-story/v1` authoring sources with single-file and multi-file projects, JSON Schema validation, browser/CLI editing, SQLite compilation, and legacy Tavern pack compatibility.
 
 ### Changed
 

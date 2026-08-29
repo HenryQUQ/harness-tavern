@@ -156,7 +156,29 @@ await test('context explicitly includes cast ids and separate private knowledge'
   assert.match(text, new RegExp(`CHARACTER_ID: ${SAMPLE_IDS.lyra}`))
   assert.match(text, /one unified Tavern turn pipeline/i)
   assert.match(text, /PRIVATE CONTEXT FOR Rowan Ash ONLY/i)
+  assert.match(text, /CURRENT SCENE SOURCE/)
+  assert.match(text, /Establish what each person knows and why they disagree/)
   assert.doesNotMatch(text, /coding agent powered by/i)
+})
+
+await test('the active Markdown scene reaches the model input without a Tavern hard truncation', async t => {
+  const { app } = await testApp(t)
+  const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
+  const story = app.repository.getStory(SAMPLE_IDS.story)
+  story.scenes[0].content = `${'scene detail '.repeat(900)}END-OF-AUTHORED-SCENE`
+  const projection = reduceEvents(app.repository.events(conversation.id), story.initial_state)
+  const context = app.contextBuilder.build({
+    conversation,
+    story,
+    persona: app.repository.getPersona(conversation.persona_id),
+    cast: app.repository.listConversationCast(conversation.id),
+    projection,
+    userMessage: 'Continue from the authored scene.',
+    resolvedIntensity: 'medium',
+  })
+  const storyInput = context.messages[1].content
+  assert.match(storyInput, /END-OF-AUTHORED-SCENE/)
+  assert.doesNotMatch(storyInput.match(/CURRENT SCENE SOURCE:[\s\S]*?\n\nACTIVE CAST:/)?.[0] ?? '', /…truncated…/)
 })
 
 await test('conversation-specific AI input is included without replacing protected runtime rules', async t => {

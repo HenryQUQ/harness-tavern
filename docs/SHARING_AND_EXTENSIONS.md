@@ -2,25 +2,29 @@
 
 Harness Tavern treats portability as part of the product rather than an export afterthought.
 
+## Editable Story source
+
+The authoring boundary is `harness-tavern-story/v1`, not a signed pack. It contains one stable `story_key`, Character resources keyed independently from SQLite, Cast references, Lorebooks and scenes. It can be one JSON file or a project manifest with relative files. See [STORY_SOURCES.md](STORY_SOURCES.md).
+
 ## Tavern pack
 
-The canonical portable format is JSON:
+The signed distribution format is JSON:
 
 ```json
 {
   "format": "harness-tavern-pack",
-  "version": 1,
-  "pack_id": "pack_...",
+  "format_version": 1,
+  "exported_at": "...",
+  "producer": {
+    "name": "Harness Tavern",
+    "version": "..."
+  },
   "kind": "character | story | collection",
   "title": "...",
-  "sharing": {
-    "author": "...",
-    "license": "...",
-    "allow_remix": true
-  },
-  "content": {
+  "items": {
     "characters": [],
-    "stories": []
+    "stories": [],
+    "personas": []
   },
   "integrity": {
     "algorithm": "sha256",
@@ -30,6 +34,8 @@ The canonical portable format is JSON:
 ```
 
 A Story pack includes the Character dependencies referenced by its cast. Import remaps identifiers and then remaps cast references and scene presence lists, preventing collisions with local content.
+
+The digest covers the exported snapshot, so hand-editing a pack invalidates its integrity check. Use an editable Story source for authoring and Git workflows; generate or download a pack for signed distribution compatibility.
 
 ## Public preview versus playable source
 
@@ -53,9 +59,9 @@ Excludes:
 - local database identifiers;
 - Personas, conversations, memories, provider settings, and credentials.
 
-### Playable source
+### Editable/playable source
 
-Contains private runtime material necessary to preserve character behaviour and story logic. The receiving user sees an import preview before making it part of their editable Library.
+Contains private runtime material necessary to preserve character behaviour and story logic, expressed as `harness-tavern-story/v1`. The receiving user sees an import preview before making it part of their editable Library and source workspace.
 
 ## Public share lifecycle
 

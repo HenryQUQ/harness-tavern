@@ -32,6 +32,8 @@ Portable URL-fragment shares do not reach the server automatically. The receivin
 
 Pack inputs are size-limited, normalized, integrity-checked when a digest is provided, and imported transactionally. Identifiers and slugs are remapped according to the selected conflict strategy.
 
+Editable Story manifests are validated against JSON Schema before compilation. Resource paths must be relative and remain inside the selected project directory; absolute paths and `..` traversal are rejected. Story source files contain private cast context, Character secrets, Director Lore and Author Notes, so they require the same confidentiality as a playable remix pack and must never be served as a public preview.
+
 ## Extensions
 
 End-user extensions are data, not code. The validator rejects executable field names and only permits known contribution types. Imported HTML and JavaScript are not mounted in the browser or server.

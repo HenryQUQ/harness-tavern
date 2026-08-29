@@ -26,3 +26,7 @@ If you only downloaded that empty archive, there is no application state inside 
 ## Content migration
 
 Characters and Stories can be migrated between instances through Tavern packs. The import preview identifies conflicts before any mutation. Use **Copy** when the destination should preserve both variants.
+
+On first startup with editable Story source support, each database-only Story is materialized under `HT_STORY_SOURCE_DIR` without changing or deleting the Story, Cast, Playthroughs or Conversations. Subsequent valid file edits compile back into the existing Story through stable source bindings. Existing `.tavernpack.json` files remain importable and receive a canonical source after import.
+
+Back up both the SQLite database and the Story source directory. The database contains conversations and runtime events that are intentionally absent from authoring files.

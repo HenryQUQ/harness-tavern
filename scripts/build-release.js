@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process'
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const releaseDir = join(root, 'release')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+const packageLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'))
 const version = packageJson.version
 const upstreamZip = process.env.HT_UPSTREAM_ZIP || '/mnt/data/deepseek-harness-master(1).zip'
 const generatedAt = new Date().toISOString()
@@ -144,10 +145,12 @@ function coldVerifySource(zipPath, label) {
     const entries = readdirSync(temp)
     if (entries.length !== 1) throw new Error(`${label}: expected one archive root, found ${entries.length}`)
     const checkout = join(temp, entries[0])
-    const test = run('npm', ['test'], { cwd: checkout })
-    const journey = run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: checkout })
+    const install = run('npm', ['ci', '--ignore-scripts'], { cwd: checkout })
+    const test = install.status === 0 ? run('npm', ['test'], { cwd: checkout }) : { status: 1, output: install.output }
+    const journey = install.status === 0 ? run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: checkout }) : { status: 1, output: install.output }
     return {
-      passed: test.status === 0 && journey.status === 0,
+      passed: install.status === 0 && test.status === 0 && journey.status === 0,
+      install_status: install.status,
       test_status: test.status,
       journey_status: journey.status,
       test_output: test.output.slice(-12_000),
@@ -165,11 +168,13 @@ function coldVerifyGitBundle(bundlePath) {
     const checkout = join(temp, 'checkout')
     const clone = run('git', ['clone', bundlePath, checkout], { cwd: temp })
     if (clone.status !== 0) return { passed: false, verify: verify.output, clone: clone.output }
-    const test = run('npm', ['test'], { cwd: checkout })
-    const journey = run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: checkout })
+    const install = run('npm', ['ci', '--ignore-scripts'], { cwd: checkout })
+    const test = install.status === 0 ? run('npm', ['test'], { cwd: checkout }) : { status: 1, output: install.output }
+    const journey = install.status === 0 ? run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: checkout }) : { status: 1, output: install.output }
     return {
-      passed: verify.status === 0 && test.status === 0 && journey.status === 0,
+      passed: verify.status === 0 && install.status === 0 && test.status === 0 && journey.status === 0,
       verify_status: verify.status,
+      install_status: install.status,
       test_status: test.status,
       journey_status: journey.status,
       verify_output: verify.output.slice(-4000),
@@ -189,10 +194,12 @@ function coldVerifyFullFork(zipPath) {
     if (roots.length !== 1) throw new Error(`Full fork archive has ${roots.length} roots`)
     const product = join(temp, roots[0], 'products', 'harness-tavern')
     if (!existsSync(join(product, 'package.json'))) throw new Error('Full fork does not contain products/harness-tavern')
-    const test = run('npm', ['test'], { cwd: product })
-    const journey = run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: product })
+    const install = run('npm', ['ci', '--ignore-scripts'], { cwd: product })
+    const test = install.status === 0 ? run('npm', ['test'], { cwd: product }) : { status: 1, output: install.output }
+    const journey = install.status === 0 ? run(process.execPath, ['scripts/verify-user-journey.js'], { cwd: product }) : { status: 1, output: install.output }
     return {
-      passed: test.status === 0 && journey.status === 0,
+      passed: install.status === 0 && test.status === 0 && journey.status === 0,
+      install_status: install.status,
       test_status: test.status,
       journey_status: journey.status,
       test_output: test.output.slice(-12_000),
@@ -296,11 +303,25 @@ writeFileSync(join(releaseDir, 'QUALITY_REPORT.json'), `${JSON.stringify({
 const stage = mkdtempSync(join(tmpdir(), `ht-stage-${version}-`))
 const stageRoot = join(stage, `harness-tavern-${version}`)
 cpSync(root, stageRoot, { recursive: true, filter: sourceCopyFilter })
+const npmComponents = Object.entries(packageLock.packages ?? {})
+  .filter(([path, metadata]) => path.startsWith('node_modules/') && metadata.version)
+  .map(([path, metadata]) => {
+    const name = path.replace(/^node_modules\//, '')
+    return {
+      type: 'library',
+      name,
+      version: metadata.version,
+      scope: 'required',
+      purl: `pkg:npm/${name.replace('/', '%2F')}@${metadata.version}`,
+      ...metadata.license ? { licenses: [{ license: { id: metadata.license } }] } : {},
+    }
+  })
 const sbom = {
   bomFormat: 'CycloneDX', specVersion: '1.5', version: 1,
   metadata: { timestamp: generatedAt, component: { type: 'application', name: 'harness-tavern', version, licenses: [{ license: { id: 'MIT' } }] } },
   components: [
     { type: 'framework', name: 'Node.js standard library', version: packageJson.engines?.node || '>=22.19.0', scope: 'required' },
+    ...npmComponents,
     { type: 'framework', name: 'DeepSeek Harness integration target', version: '0.1.2-alpha.1', scope: 'optional', purl: 'pkg:github/deepseek-ai/deepseek-harness@cd5ef8148158c3a752a658978873241fdf8e2bbc' },
   ],
 }
@@ -395,7 +416,7 @@ const finalStatus = {
   source_archive_files: inventory.files,
   cold_source_passed: sourceCold.passed,
   cold_git_bundle_passed: bundleCold.passed,
-  cold_full_fork_passed: fullForkCold?.passed ?? false,
+  cold_full_fork_passed: fullForkCold?.passed ?? null,
 }
 writeFileSync(join(releaseDir, 'FINAL_STATUS.json'), `${JSON.stringify(finalStatus, null, 2)}\n`)
 writeFileSync(join(releaseDir, 'FINAL_STATUS.md'), [

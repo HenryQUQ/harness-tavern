@@ -245,6 +245,32 @@ const MIGRATIONS = [
         WHERE provider_id = 'deepseek' AND COALESCE(default_model, '') IN ('', 'deepseek-chat');
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE story_sources (
+        story_id TEXT PRIMARY KEY REFERENCES stories(id) ON DELETE CASCADE,
+        story_key TEXT NOT NULL UNIQUE,
+        source_path TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_digest TEXT NOT NULL,
+        source_version INTEGER NOT NULL,
+        loaded_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_error TEXT
+      );
+      CREATE INDEX story_sources_updated ON story_sources(updated_at DESC);
+
+      CREATE TABLE story_source_characters (
+        story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+        character_key TEXT NOT NULL,
+        character_id TEXT NOT NULL REFERENCES characters(id) ON DELETE RESTRICT,
+        PRIMARY KEY (story_id, character_key),
+        UNIQUE (story_id, character_id)
+      );
+      CREATE INDEX story_source_characters_character ON story_source_characters(character_id);
+    `,
+  },
 ]
 
 export class Database {

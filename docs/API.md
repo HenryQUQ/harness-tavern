@@ -22,7 +22,7 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | DELETE | `/api/characters/:id` | Delete unused Character |
 | POST | `/api/personas` | Create Persona |
 | PATCH | `/api/personas/:id` | Update Persona |
-| POST | `/api/favorites/:type/:id` | Favorite/unfavorite Character or Story |
+| POST | `/api/favorites` | Favorite/unfavorite an entity using `entity_type`, `entity_id`, and `favorite` |
 
 ## Stories and Playthroughs
 
@@ -32,8 +32,9 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | POST | `/api/stories` | Create Story |
 | PATCH | `/api/stories/:id` | Update Story and Cast |
 | DELETE | `/api/stories/:id` | Delete Story |
+| GET | `/api/story-sources/:id` | Resolved canonical editable source and binding metadata |
+| PUT | `/api/story-sources/:id` | Validate `source`, check optional `expected_digest`, write bound files, and rebuild the runtime projection |
 | POST | `/api/playthroughs` | Select Persona/player role and begin Story |
-| GET | `/api/playthroughs/:id` | Playthrough detail |
 
 ## Conversations and Timelines
 
@@ -58,9 +59,8 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | POST | `/api/creator/story-drafts` | Plain-language Story and Cast draft |
 | PATCH | `/api/creator/drafts/:id` | Edit/save Draft |
 | DELETE | `/api/creator/drafts/:id` | Delete Draft |
-| POST | `/api/creator/drafts/:id/publish-character` | Publish Character |
-| POST | `/api/creator/drafts/:id/publish-story` | Publish Story, optionally start Playthrough |
-| POST | `/api/stories/:id/save-as-template` | Create declarative template extension |
+| POST | `/api/creator/drafts/:id/publish` | Publish Character or Story, optionally start a Story Playthrough |
+| POST | `/api/extensions/from-story/:storyId` | Create declarative template extension |
 
 ## Portable import and sharing
 
@@ -68,17 +68,32 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 |---|---|---|
 | GET | `/api/exports/characters/:id` | Download Character Tavern pack |
 | GET | `/api/exports/stories/:id` | Download playable Story Tavern pack |
-| POST | `/api/imports/preview` | Validate and preview pack/Character Card |
-| POST | `/api/imports/apply` | Transactional Copy/Replace/Skip import |
-| POST | `/api/share-links` | Create compressed portable link |
-| POST | `/api/share-links/decode` | Decode link for preview |
+| GET | `/api/exports/stories/:id?format=source` | Download self-contained editable Story source |
+| POST | `/api/import/preview` | Validate and preview Story source/project, pack, or Character Card |
+| POST | `/api/import/apply` | Transactional Copy/Replace/Skip import |
+| POST | `/api/share-links` | Legacy share-link compatibility alias |
 | POST | `/api/shares` | Create revocable public snapshot |
 | GET | `/api/shares` | List owner’s public shares |
-| DELETE | `/api/shares/:id` | Revoke public share |
+| DELETE | `/api/shares/:tokenHash` | Revoke public share |
 | GET | `/api/public/shares/:token` | Public safe snapshot |
 | GET | `/api/public/shares/:token/download` | Public pack download when allowed |
 
-The standalone public page is `/share.html?token=…`.
+The standalone public page is `/share/:token`.
+
+Story project folder upload uses a JSON transport envelope only at the HTTP boundary:
+
+```json
+{
+  "format": "harness-tavern-story-project-files",
+  "manifest_path": "my-story/story.tavern.json",
+  "files": {
+    "my-story/story.tavern.json": "{ ... }",
+    "my-story/scenes/001-opening.md": "# Opening"
+  }
+}
+```
+
+The envelope is not an authoring format. The files inside it are validated and persisted as an ordinary multi-file Story project.
 
 ## Extensions
 

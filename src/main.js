@@ -28,6 +28,9 @@ try {
       playthroughs: app.repository.listPlaythroughs().length,
       conversations: app.repository.listConversations({ includeArchived: true }).length,
       drafts: app.repository.listDrafts().length,
+      story_sources: app.storySources.listBindings().length,
+      story_source_directory: app.config.storySourceDir,
+      story_source_errors: app.storySourceStatus.errors,
     }, null, 2))
     await app.close()
   } else if (command === 'seed') {

@@ -13,6 +13,7 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 COPY --chown=node:node public ./public
 COPY --chown=node:node src ./src
+COPY --chown=node:node schemas ./schemas
 COPY --chown=node:node LICENSE README.md ./
 
 USER node

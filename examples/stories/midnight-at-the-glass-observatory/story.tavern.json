@@ -1,0 +1,118 @@
+{
+  "$schema": "../../../schemas/story.schema.json",
+  "format": "harness-tavern-story",
+  "format_version": 1,
+  "story_key": "midnight-at-the-glass-observatory",
+  "story": {
+    "title": "Midnight at the Glass Observatory",
+    "hook": "A stolen lens and three conflicting witnesses leave you thirty minutes to decide what the sky will become.",
+    "summary": "A multi-character mystery demonstrating private knowledge, persistent state and editable Story files.",
+    "premise": "Thirty minutes before a rare alignment, the observatory revokes its warden and its celestial lens disappears. The Wayfarer and three witnesses must decide whether to restore the machine, open the forbidden gate or escape.",
+    "genre": "Mystery · science fantasy",
+    "tone": "Tense, intimate and choice-driven",
+    "opening_scene": "The central orrery turns without power. Snow seals the mountain outside, and unfamiliar stars appear beneath the glass floor.",
+    "player_role": "The Wayfarer. Your history, thoughts and choices remain yours.",
+    "world_rules": [
+      "Locked paths require a key or another credible method.",
+      "Characters know public facts, their own observations and their own private context.",
+      "Consequences persist until an event changes them."
+    ],
+    "initial_state": {
+      "scene": {
+        "id": "central-hall",
+        "title": "The powerless orrery",
+        "location": "Central Hall",
+        "time": "11:30 PM"
+      },
+      "clock": {
+        "minutes_to_alignment": 30
+      },
+      "observatory": {
+        "authority": "revoked"
+      }
+    },
+    "author_notes": "Let the cast disagree naturally. Reveal private information only through evidence or the character who knows it.",
+    "content_warnings": [
+      "Confinement",
+      "Mild peril"
+    ],
+    "tags": [
+      "ensemble",
+      "mystery",
+      "starter-story"
+    ],
+    "visibility": "public",
+    "share_policy": {
+      "allow_remix": true,
+      "attribution": "Harness Tavern sample"
+    }
+  },
+  "characters": [
+    {
+      "key": "mira-vale",
+      "source": "characters/mira-vale.character.json"
+    },
+    {
+      "key": "rowan-ash",
+      "source": "characters/rowan-ash.character.json"
+    },
+    {
+      "key": "lyra-voss",
+      "source": "characters/lyra-voss.character.json"
+    }
+  ],
+  "cast": [
+    {
+      "character": "mira-vale",
+      "role": "Archivist and investigator",
+      "public_context": "Mira discovered that the lens was missing.",
+      "private_context": "Only Mira knows the ledger margins encode a star map."
+    },
+    {
+      "character": "rowan-ash",
+      "role": "Courier and guarded witness",
+      "public_context": "Rowan delivered a sealed case earlier tonight.",
+      "private_context": "Rowan carries one half of the missing lens."
+    },
+    {
+      "character": "lyra-voss",
+      "role": "Warden and keeper of the rules",
+      "public_context": "Lyra normally controls every mechanism, but the observatory rejected her keys.",
+      "private_context": "Lyra knows that the alignment can open an erased gate."
+    }
+  ],
+  "lorebooks": [
+    {
+      "key": "observatory",
+      "source": "lore/observatory.lorebook.json"
+    }
+  ],
+  "scenes": [
+    {
+      "key": "central-hall",
+      "title": "The powerless orrery",
+      "location": "Central Hall",
+      "time": "11:30 PM",
+      "objective": "Establish what each person knows and why they disagree.",
+      "source": "scenes/001-opening.md",
+      "active_characters": [
+        "mira-vale",
+        "rowan-ash",
+        "lyra-voss"
+      ]
+    },
+    {
+      "key": "archive",
+      "title": "The rewritten ledger",
+      "location": "Archive",
+      "time": "Before midnight",
+      "objective": "Discover that the observatory changed its own records.",
+      "source": "scenes/002-archive.md",
+      "active_characters": [
+        "mira-vale",
+        "rowan-ash",
+        "lyra-voss"
+      ]
+    }
+  ]
+}

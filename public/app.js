@@ -290,11 +290,42 @@ async function openStoryDetail(storyId) {
       latest?.current_conversation_id ? el('button', { text: t('continue'), on: { click: () => { closeModal(); openConversation(latest.current_conversation_id) } } }) : null,
       el('button', { class: latest ? 'secondary' : '', text: latest ? t('newPlaythrough') : t('beginStory'), on: { click: () => startStory(story) } }),
       el('button', { class: 'secondary', text: fav ? t('unfavorite') : t('favorite'), on: { click: () => toggleFavorite('story', story.id, !fav, () => openStoryDetail(story.id)) } }),
+      el('button', { class: 'secondary', text: 'Edit Story source', on: { click: () => openStorySourceEditor(story) } }),
       el('button', { class: 'secondary', text: t('share'), on: { click: () => openShare('story', story.id, story.title) } }),
       el('button', { class: 'secondary', text: t('saveAsTemplate'), on: { click: () => saveStoryAsTemplate(story) } }),
     ),
   )
   openModal(story.title, content, { wide: true })
+}
+
+async function openStorySourceEditor(story) {
+  const loaded = await api(`/api/story-sources/${encodeURIComponent(story.id)}`)
+  const source = el('textarea', { class: 'source-editor', rows: 28, spellcheck: 'false', value: JSON.stringify(loaded.source, null, 2) })
+  const parse = () => {
+    try { return JSON.parse(source.value) } catch (error) { throw new Error(`Story source is not valid JSON: ${error.message}`) }
+  }
+  const form = el('form', { class: 'friendly-form source-editor-form' },
+    el('div', { class: 'source-status' },
+      el('div', {}, el('strong', { text: `${loaded.source.format}/v${loaded.source.format_version}` }), el('small', { text: `${loaded.binding.kind} source · ${loaded.binding.path}` })),
+      el('span', { class: 'status-pill active', text: 'Canonical source' }),
+    ),
+    el('p', { text: 'This versioned file is the editable Story source. Saving validates character and scene references, writes the bound files, then rebuilds the SQLite runtime projection.' }),
+    el('label', {}, el('span', { text: 'Story source JSON' }), source),
+    el('div', { class: 'profile-actions' },
+      el('button', { type: 'submit', text: 'Validate and save source' }),
+      el('button', { type: 'button', class: 'secondary', text: 'Download editable source', on: { click: () => downloadJson(parse(), `${loaded.source.story_key}.story.tavern.json`) } }),
+    ),
+    el('p', { class: 'microcopy', text: 'Character keys and story_key are stable file identifiers, not local database IDs. Conversations and playthrough state stay separate.' }),
+  )
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    const saved = await api(`/api/story-sources/${encodeURIComponent(story.id)}`, { method: 'PUT', body: JSON.stringify({ source: parse(), expected_digest: loaded.binding.digest }) })
+    closeModal()
+    await refresh()
+    toast('Story source validated and saved')
+    await openStoryDetail(saved.story.id)
+  })
+  openModal(`Edit source: ${story.title}`, form, { wide: true, autoFocus: false })
 }
 
 function saveStoryAsTemplate(story) {
@@ -1253,6 +1284,7 @@ async function openShare(entityType, entityId, title) {
       el('div', { class: 'profile-actions' },
         typeof navigator.share === 'function' ? el('button', { text: 'Share from this device', on: { click: () => navigator.share({ title, text: values.scope === 'remix' ? `Open or remix “${title}” in Harness Tavern.` : `Preview “${title}” in Harness Tavern.`, url: link.url }).catch(error => { if (error.name !== 'AbortError') toast(error.message) }) } }) : null,
         el('button', { class: 'secondary', text: 'Download portable Tavern pack', on: { click: portable } }),
+        entityType === 'story' ? el('button', { class: 'secondary', text: 'Download editable Story source', on: { click: async () => downloadJson(await api(`/api/exports/stories/${entityId}?format=source`), `${title}.story.tavern.json`) } }) : null,
         entityType === 'character' ? el('button', { class: 'secondary', text: 'Download SillyTavern V2 card', on: { click: async () => downloadJson(await api(`/api/exports/characters/${entityId}?format=sillytavern-v2`), `${title}.character.json`) } }) : null,
       ),
       el('p', { class: 'microcopy', text: 'The portable file works between independent Tavern installations. A link works while this Tavern server is reachable.' }),
@@ -1327,8 +1359,13 @@ function openImportDialog(content = '') {
   const form = el('form', { class: 'friendly-form' },
     el('button', { type: 'button', class: 'file-drop', on: { click: () => $('#importFile').click() } },
       el('span', { class: 'choice-icon', text: '⇧' }),
-      el('strong', { text: t('chooseFile') }),
-      el('small', { text: 'Tavern story packs and SillyTavern Character Card JSON are supported.' }),
+      el('strong', { text: 'Choose one editable file' }),
+      el('small', { text: 'Tavern story packs and SillyTavern Character Card JSON are supported. Editable Story source JSON works too.' }),
+    ),
+    el('button', { type: 'button', class: 'file-drop secondary-project-drop', on: { click: () => $('#storyProjectFiles').click() } },
+      el('span', { class: 'choice-icon', text: '▦' }),
+      el('strong', { text: 'Choose a Story project folder' }),
+      el('small', { text: 'Imports story.tavern.json together with relative Character, Lorebook and Markdown scene files.' }),
     ),
     el('details', { class: 'advanced-details' },
       el('summary', { text: 'Paste shared text instead' }),
@@ -1356,6 +1393,14 @@ async function previewImport(content) {
     ),
   )
   openModal(t('previewImport'), body)
+}
+
+async function storyProjectBundle(fileList) {
+  const files = {}
+  for (const file of fileList) files[file.webkitRelativePath || file.name] = await file.text()
+  const manifests = Object.keys(files).filter(path => path.endsWith('/story.tavern.json') || path === 'story.tavern.json' || path.endsWith('.story.tavern.json'))
+  if (manifests.length !== 1) throw new Error('Choose one Story project folder containing exactly one story.tavern.json manifest.')
+  return { format: 'harness-tavern-story-project-files', manifest_path: manifests[0], files }
 }
 
 async function applyImport(strategy) {
@@ -1609,6 +1654,11 @@ function wireEvents() {
   $('#profileForm').addEventListener('submit', async event => { event.preventDefault(); await api('/api/user-profile', { method: 'PATCH', body: JSON.stringify(formObject(event.currentTarget)) }); await refresh(); toast(t('saved')) })
   $('#connectOpenRouter').addEventListener('click', async () => { const result = await api('/api/account-connections/openrouter-oauth/begin', { method: 'POST', body: '{}' }); location.href = result.authorization_url })
   $('#importFile').addEventListener('change', async event => { const file = event.target.files[0]; if (!file) return; const text = await file.text(); event.target.value = ''; await previewImport(text) })
+  $('#storyProjectFiles').addEventListener('change', async event => {
+    const files = [...event.target.files]
+    if (!files.length) return
+    try { await previewImport(await storyProjectBundle(files)) } finally { event.target.value = '' }
+  })
   $('#modalLayer').addEventListener('click', event => { if (event.target === $('#modalLayer')) closeModal() })
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeDrawer(); closeMobileNav() } })
   document.addEventListener('click', event => {

@@ -31,9 +31,10 @@ function characterName(index, genre) {
 }
 
 export class CreatorService {
-  constructor({ repository, extensions }) {
+  constructor({ repository, extensions, storySources = null }) {
     this.repository = repository
     this.extensions = extensions
+    this.storySources = storySources
   }
 
   generateCharacterDraft(input = {}) {
@@ -207,6 +208,7 @@ export class CreatorService {
         })
       }
     })
+    this.storySources?.syncRuntimeStory(story.id)
     return { type: 'story', story, playthrough, draft: this.repository.getDraft(draft.id) }
   }
 }

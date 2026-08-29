@@ -411,6 +411,12 @@ input::placeholder, textarea::placeholder { color: #776d7d; }
 .file-drop .choice-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: var(--surface-2); color: var(--warm); font-size: 1.25rem; }
 .file-drop strong, .file-drop small { display: block; }
 .file-drop small { color: var(--muted); max-width: 460px; line-height: 1.45; font-weight: 400; }
+.secondary-project-drop { margin-top: 10px; }
+.source-editor-form { gap: 14px; }
+.source-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.source-status strong, .source-status small { display: block; }
+.source-status small { margin-top: 3px; color: var(--muted); }
+.source-editor { min-height: min(52vh, 620px); resize: vertical; tab-size: 2; font: 0.82rem/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; white-space: pre; }
 .advanced-details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .advanced-details summary { color: var(--muted); cursor: pointer; font-size: .82rem; }
 .advanced-details[open] summary { margin-bottom: 10px; color: var(--text); }

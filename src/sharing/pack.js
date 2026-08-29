@@ -85,8 +85,9 @@ function publicStory(story) {
   }
 }
 
-function cardToCharacter(card) {
+export function cardToCharacter(card) {
   const data = plainObject(card.data) ? card.data : card
+  const harness = plainObject(data.extensions?.harness_tavern) ? data.extensions.harness_tavern : {}
   const name = cleanText(data.name, 120)
   assert(name, 'Character card is missing a name')
   const book = data.character_book ?? data.characterBook
@@ -101,17 +102,18 @@ function cardToCharacter(card) {
     name,
     description: cleanText(data.description, 20_000),
     personality: cleanText(data.personality, 20_000),
-    appearance: cleanText(data.appearance, 10_000),
+    appearance: cleanText(data.appearance ?? harness.appearance, 10_000),
     scenario: cleanText(data.scenario, 20_000),
     first_message: cleanText(data.first_mes ?? data.first_message, 20_000),
     speech_style: cleanText(data.speech_style ?? data.post_history_instructions, 10_000),
-    goals: uniqueStrings(data.goals, 50, 2000),
-    secrets: uniqueStrings(data.secrets, 50, 3000),
-    boundaries: uniqueStrings(data.boundaries, 50, 3000),
+    goals: uniqueStrings(data.goals ?? harness.goals, 50, 2000),
+    secrets: uniqueStrings(data.secrets ?? harness.secrets, 50, 3000),
+    boundaries: uniqueStrings(data.boundaries ?? harness.boundaries, 50, 3000),
     tags: uniqueStrings(data.tags, 50, 100),
     creator_notes: cleanText(data.creator_notes, 20_000),
     extensions: { ...(plainObject(data.extensions) ? data.extensions : {}), imported_lore: bookEntries },
     metadata: {
+      ...(plainObject(harness.metadata) ? harness.metadata : {}),
       imported_from: card.spec || 'sillytavern-character-card',
       alternate_greetings: Array.isArray(data.alternate_greetings) ? data.alternate_greetings.slice(0, 50) : [],
       example_dialogue: cleanText(data.mes_example, 20_000),
@@ -120,10 +122,43 @@ function cardToCharacter(card) {
   }
 }
 
+export function characterToCardV2(character) {
+  return {
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: character.name,
+      description: character.description,
+      personality: character.personality,
+      scenario: character.scenario,
+      first_mes: character.first_message,
+      mes_example: character.metadata?.example_dialogue || '',
+      creator_notes: character.creator_notes,
+      system_prompt: character.metadata?.system_prompt || '',
+      post_history_instructions: character.speech_style,
+      alternate_greetings: character.metadata?.alternate_greetings || [],
+      tags: character.tags,
+      creator: 'Harness Tavern',
+      character_version: '1.0',
+      extensions: {
+        ...character.extensions,
+        harness_tavern: {
+          appearance: character.appearance,
+          goals: character.goals,
+          secrets: character.secrets,
+          boundaries: character.boundaries,
+          metadata: character.metadata,
+        },
+      },
+    },
+  }
+}
+
 export class SharingService {
-  constructor({ repository, extensions, config }) {
+  constructor({ repository, extensions, storySources = null, config }) {
     this.repository = repository
     this.extensions = extensions
+    this.storySources = storySources
     this.config = config
   }
 
@@ -255,6 +290,8 @@ export class SharingService {
         if (source.id) result.id_map[source.id] = saved.id
       }
     })
+    for (const character of result.characters) this.storySources?.syncRuntimeCharacter(character.id, { character })
+    for (const story of result.stories) this.storySources?.syncRuntimeStory(story.id)
     const receipt = this.repository.recordImport({
       packFormat: pack.source_format || pack.format,
       sourceName: source_name,
@@ -296,25 +333,6 @@ export class SharingService {
 
   toCharacterCardV2(characterId) {
     const character = this.repository.getCharacter(characterId)
-    return {
-      spec: 'chara_card_v2',
-      spec_version: '2.0',
-      data: {
-        name: character.name,
-        description: character.description,
-        personality: character.personality,
-        scenario: character.scenario,
-        first_mes: character.first_message,
-        mes_example: character.metadata?.example_dialogue || '',
-        creator_notes: character.creator_notes,
-        system_prompt: character.metadata?.system_prompt || '',
-        post_history_instructions: character.speech_style,
-        alternate_greetings: character.metadata?.alternate_greetings || [],
-        tags: character.tags,
-        creator: 'Harness Tavern',
-        character_version: '1.0',
-        extensions: { ...character.extensions, harness_tavern: { goals: character.goals, secrets: character.secrets, boundaries: character.boundaries, metadata: character.metadata } },
-      },
-    }
+    return characterToCardV2(character)
   }
 }

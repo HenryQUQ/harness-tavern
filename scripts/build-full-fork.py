@@ -60,6 +60,18 @@ profile; that boundary remains explicit and replaceable.
 """
     (upstream / "HARNESS_TAVERN.md").write_text(integration_readme, encoding="utf-8")
 
+    install = subprocess.run(
+        ["npm", "ci", "--ignore-scripts"],
+        cwd=target,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    (target / "FULL_FORK_PRODUCT_INSTALL.txt").write_text(install.stdout, encoding="utf-8")
+    if install.returncode:
+        raise SystemExit(f"Product dependency install failed inside full fork (exit {install.returncode})")
+
     test = subprocess.run(
         ["npm", "test"],
         cwd=target,
@@ -71,6 +83,7 @@ profile; that boundary remains explicit and replaceable.
     (target / "FULL_FORK_PRODUCT_TEST.txt").write_text(test.stdout, encoding="utf-8")
     if test.returncode:
         raise SystemExit(f"Product tests failed inside full fork (exit {test.returncode})")
+    shutil.rmtree(target / "node_modules", ignore_errors=True)
 
     output = release / f"deepseek-harness-tavern-{version}-full-fork-source.zip"
     output.unlink(missing_ok=True)

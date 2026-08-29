@@ -25,6 +25,8 @@ You do not need to describe prompts, memory systems, or state schemas.
 6. Review each cast member’s role and private context.
 7. Publish and Playtest.
 
+Publishing creates a versioned editable Story source. Open the Story and choose **Edit Story source** to inspect or change the self-contained JSON, or download it for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks and Markdown scenes in separate files. Single-character and multi-character Stories use the same format.
+
 A useful brief sounds like:
 
 > Three former friends are trapped overnight in an abandoned broadcast station. One of them caused the emergency, another knows why the station was closed, and the third is trying to keep everyone together. The user arrives as a freelance engineer.
@@ -67,4 +69,4 @@ Hard rules should describe facts the narration cannot casually ignore, for examp
 
 ## Share the story
 
-Use **Public preview** when the goal is discovery. Use **Download playable pack** when another creator or player should import and run the complete Story. State the license and whether remixing is allowed.
+Use **Public preview** when the goal is discovery. Use **Download editable Story source** when another creator should read, version or modify the Story. Use **Download portable Tavern pack** for signed legacy import compatibility. State the license and whether remixing is allowed.

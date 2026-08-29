@@ -19,6 +19,7 @@ Human-facing services
 ├── Player Journal
 ├── Guided Creator
 ├── Sharing and import
+├── Editable Story source workspace
 └── Declarative Extension Registry
 
 Tavern domain
@@ -40,7 +41,8 @@ Runtime
 └── Transactional event commit
 
 Persistence
-├── SQLite
+├── Versioned Story source files
+├── SQLite runtime projections and source bindings
 ├── Append-only events
 ├── Deterministic projection
 ├── encrypted provider credentials
@@ -88,11 +90,17 @@ The Story Cast stores public and private context separately. The runtime directo
 
 ### Guided Creator
 
-The default generator is deterministic and local. It converts an ordinary-language brief and friendly template into an editable draft. Publishing maps temporary cast identifiers to durable Character identifiers inside a transaction.
+The default generator is deterministic and local. It converts an ordinary-language brief and friendly template into an editable draft. Publishing maps temporary cast identifiers to durable Character identifiers inside a transaction and materializes a canonical Story source.
+
+### Story sources
+
+`harness-tavern-story/v1` is the authored Story boundary. A self-contained JSON file and a project manifest with relative resources resolve into the same normalized model. JSON Schema validation, reference validation and path containment run before compilation. Stable file keys map to local Story and Character identifiers through dedicated source-binding tables.
+
+Startup reloads valid bound files into SQLite. Invalid manual edits leave the last valid projection available and are surfaced as source errors. Browser saves update bound resource files before rebuilding the projection. Playthrough events and provider settings never write back into Story sources.
 
 ### Sharing
 
-The Sharing service owns pack creation, integrity checks, SillyTavern normalization, preview, conflict planning, identifier remapping, and transactional import.
+The Sharing service owns legacy pack creation, integrity checks, SillyTavern normalization, preview, conflict planning, identifier remapping, and transactional import. Packs are distribution snapshots. The Story source service owns editable authoring files and converts imported packs into canonical sources after import.
 
 ### Public shares
 

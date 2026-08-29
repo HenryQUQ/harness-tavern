@@ -80,6 +80,7 @@ export class ContextBuilder {
     )).join('\n\n--- CHARACTER BOUNDARY ---\n\n')
     const publicLore = (story?.lore ?? []).filter(item => !item.visibility || item.visibility === 'public')
     const directorLore = (story?.lore ?? []).filter(item => ['director', 'private'].includes(item.visibility))
+    const sceneBlueprint = story?.scenes?.find(scene => scene.id === projection.scene?.id) ?? null
     const storyContract = story ? `
 STORY: ${story.title}
 HOOK: ${truncate(story.hook, 1200)}
@@ -89,6 +90,7 @@ WORLD RULES: ${truncate(stableStringify(story.world_rules), 6000)}
 PUBLIC LORE: ${truncate(stableStringify(publicLore), 7000)}
 DIRECTOR-ONLY LORE: ${truncate(stableStringify(directorLore), 5000)}
 AUTHOR DIRECTION: ${truncate(story.author_notes, 4000)}
+CURRENT SCENE SOURCE: ${sceneBlueprint ? stableStringify(sceneBlueprint) : 'No authored scene file is bound to the current scene.'}
 
 ACTIVE CAST:
 ${castBlocks}` : `

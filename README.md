@@ -101,7 +101,13 @@ A creator can save an existing Story as a declarative Story Template. The templa
 
 ## Sharing
 
-Harness Tavern supports three sharing levels.
+Harness Tavern separates editable source from distribution and public preview.
+
+### Editable Story source
+
+Every published single-character or multi-character Story has a canonical `harness-tavern-story/v1` source. A compact Story is one self-contained `*.story.tavern.json` file. A larger Story can use `story.tavern.json` plus relative Character Card, Lorebook and Markdown scene files. These files use stable keys rather than database IDs and can be edited directly, validated, versioned in Git and recompiled into SQLite.
+
+See [Editable Story sources](docs/STORY_SOURCES.md) and the [checked-in project example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
 
 ### Public preview
 
@@ -109,7 +115,7 @@ A revocable browser page containing only player-safe material: title, hook, publ
 
 ### Playable Tavern pack
 
-A versioned `.tavernpack.json` file containing the Story and required Characters. It includes creator-only knowledge required by the runtime, so it should be shared as editable source content rather than mistaken for a public preview.
+A versioned `.tavernpack.json` distribution snapshot containing the Story and required Characters. It preserves signed import compatibility between Tavern installations, but its export timestamp, integrity digest and remapped runtime identifiers make it an artifact rather than an authoring source.
 
 ### Portable link
 
@@ -179,6 +185,7 @@ See:
 - [Sharing and extensions](docs/SHARING_AND_EXTENSIONS.md)
 - [Creator guide](docs/CREATOR_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Editable Story sources](docs/STORY_SOURCES.md)
 - [API](docs/API.md)
 - [Security](docs/SECURITY.md)
 - [Migration](docs/MIGRATION.md)
@@ -193,6 +200,7 @@ npm run check
 npm run test:coverage
 npm run verify:journey
 npm run doctor
+npm run story:validate -- examples/stories/midnight-at-the-glass-observatory
 npm run release
 ```
 
