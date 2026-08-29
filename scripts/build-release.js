@@ -25,6 +25,7 @@ const generatedAt = new Date().toISOString()
 
 rmSync(releaseDir, { recursive: true, force: true })
 mkdirSync(releaseDir, { recursive: true })
+writeFileSync(join(releaseDir, '.gitkeep'), '\n')
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
