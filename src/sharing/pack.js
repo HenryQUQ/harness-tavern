@@ -111,6 +111,9 @@ export function cardToCharacter(card) {
     keywords: uniqueStrings(entry.keys ?? entry.keywords, 50, 100),
     visibility: 'public',
   })) : []
+  const alternateGreetings = Array.isArray(data.alternate_greetings) ? data.alternate_greetings.slice(0, 50) : []
+  const exampleDialogue = cleanText(data.mes_example, 20_000)
+  const systemPrompt = cleanText(data.system_prompt, 20_000)
   return {
     name,
     description: cleanText(data.description, 20_000),
@@ -122,15 +125,16 @@ export function cardToCharacter(card) {
     goals: uniqueStrings(data.goals ?? harness.goals, 50, 2000),
     secrets: uniqueStrings(data.secrets ?? harness.secrets, 50, 3000),
     boundaries: uniqueStrings(data.boundaries ?? harness.boundaries, 50, 3000),
+    avatar_url: cleanText(data.avatar_url ?? harness.avatar_url, 200_000),
     tags: uniqueStrings(data.tags, 50, 100),
     creator_notes: cleanText(data.creator_notes, 20_000),
-    extensions: { ...(plainObject(data.extensions) ? data.extensions : {}), imported_lore: bookEntries },
+    extensions: { ...(plainObject(data.extensions) ? data.extensions : {}), ...bookEntries.length ? { imported_lore: bookEntries } : {} },
     metadata: {
       ...(plainObject(harness.metadata) ? harness.metadata : {}),
       imported_from: card.spec || 'sillytavern-character-card',
-      alternate_greetings: Array.isArray(data.alternate_greetings) ? data.alternate_greetings.slice(0, 50) : [],
-      example_dialogue: cleanText(data.mes_example, 20_000),
-      system_prompt: cleanText(data.system_prompt, 20_000),
+      ...alternateGreetings.length ? { alternate_greetings: alternateGreetings } : {},
+      ...exampleDialogue ? { example_dialogue: exampleDialogue } : {},
+      ...systemPrompt ? { system_prompt: systemPrompt } : {},
     },
   }
 }
@@ -160,6 +164,7 @@ export function characterToCardV2(character) {
           goals: character.goals,
           secrets: character.secrets,
           boundaries: character.boundaries,
+          avatar_url: character.avatar_url,
           metadata: character.metadata,
         },
       },

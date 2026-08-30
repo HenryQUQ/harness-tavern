@@ -15,6 +15,8 @@ A useful brief sounds like:
 
 You do not need to describe prompts, memory systems, or state schemas.
 
+After publishing, open the Character in **Library → Edit character**. The Character workspace keeps identity, appearance, voice, meeting scenario, first message, long-term goals, private facts, boundaries, creator notes, Character Card metadata, and extension data editable. If the Character is referenced by a canonical Story source, saving updates that file as well. A newer external file edit is never silently overwritten.
+
 ## Create a story
 
 1. Open **Create**.
@@ -25,7 +27,16 @@ You do not need to describe prompts, memory systems, or state schemas.
 6. Review each cast member’s role and private context.
 7. Publish and Playtest.
 
-Publishing creates a versioned editable Story source. Open the Story and choose **Edit Story source** to inspect or change the self-contained JSON, or download it for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks, Markdown scenes, Actions and Agendas in separate files. Narrator-only, single-character and multi-character Stories use the same v2 format.
+Publishing creates a versioned editable Story source. Open the Story in **Library → Edit story** to use the visual workspace:
+
+- **Overview** edits the player-facing invitation, role, tone, visibility, tags, cover, and content notes.
+- **Cast** adds, removes, and reorders any number of Characters and edits their public/private Story context.
+- **World & lore** edits the opening, rules, and audience-scoped Lore entries.
+- **Scenes** adds, removes, reorders, and edits Markdown scenes and their active Cast.
+- **Causality** edits Initial State, World Schema, typed Actions, durable Agendas, State Visibility, and the Prompt Graph.
+- **Advanced** edits author notes, metadata, share policy, and opens the complete source editor.
+
+Every save validates and writes the canonical source before rebuilding the runtime projection. If another tab or text editor changed the source since it was opened, the save is rejected and asks you to reload. Choose **Open complete Story source** for direct JSON control, or download the source for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks, Markdown scenes, Actions and Agendas in separate files. Narrator-only, single-character and multi-character Stories use the same v2 format and editor.
 
 A useful brief sounds like:
 

@@ -711,6 +711,42 @@ export class StorySourceService {
     return { source: loaded.source, binding: publicBinding(currentBinding, this.root) }
   }
 
+  getRuntimeStory(storyId) {
+    this.get(storyId)
+    const binding = this.binding(storyId)
+    this.compilePath(binding.source_path, { targetStoryId: storyId, strategy: 'replace' })
+    const refreshed = this.get(storyId)
+    return {
+      story: this.repository.getStory(storyId),
+      binding: refreshed.binding,
+    }
+  }
+
+  getRuntimeCharacter(characterId) {
+    const character = this.repository.getCharacter(characterId)
+    const bindings = this.#characterBindings(character.id).map(binding => {
+      const loaded = loadStorySourcePath(binding.source_path)
+      const resource = loaded.source.characters.find(item => item.key === binding.character_key)
+      assert(resource, `Story source no longer contains character key “${binding.character_key}”`, 409, 'story_source_binding_failed')
+      const rel = relative(this.root, binding.source_path)
+      return {
+        story_id: binding.story_id,
+        story_key: binding.story_key,
+        story_title: this.repository.getStory(binding.story_id).title,
+        character_key: binding.character_key,
+        kind: binding.source_kind,
+        path: rel && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? rel : basename(binding.source_path),
+        linked: rel.startsWith(`..${sep}`) || isAbsolute(rel),
+        resource_digest: sha256Hex(stableStringify(resource.card)),
+      }
+    })
+    return {
+      character,
+      bindings,
+      edit_token: sha256Hex(stableStringify({ character: comparableCharacter(character), slug: character.slug, bindings })),
+    }
+  }
+
   save(storyId, input, { expectedDigest = null } = {}) {
     const binding = this.binding(storyId)
     assert(binding, 'Story has no editable source binding', 404, 'story_source_not_found')
@@ -770,13 +806,12 @@ export class StorySourceService {
     }).story
   }
 
-  updateRuntimeStory(storyId, input) {
-    let currentStory = this.repository.getStory(storyId)
-    const existingBinding = this.binding(currentStory.id)
-    if (existingBinding) {
-      this.compilePath(existingBinding.source_path, { targetStoryId: currentStory.id, strategy: 'replace' })
-      currentStory = this.repository.getStory(currentStory.id)
-    }
+  updateRuntimeStory(storyId, input, { expectedDigest = null } = {}) {
+    const opened = this.get(storyId)
+    assert(!expectedDigest || expectedDigest === opened.binding.digest, 'The Story source changed after you opened the editor. Reload before saving so newer file edits are not overwritten.', 409, 'story_source_conflict')
+    const existingBinding = this.binding(storyId)
+    this.compilePath(existingBinding.source_path, { targetStoryId: storyId, strategy: 'replace' })
+    const currentStory = this.repository.getStory(storyId)
     const cast = input.cast === undefined ? currentStory.cast : input.cast.map((member, index) => ({
       ...member,
       sort_order: index,
@@ -790,10 +825,12 @@ export class StorySourceService {
     const loaded = this.get(currentStory.id)
     const characterKeyById = new Map(this.db.raw.prepare('SELECT character_key, character_id FROM story_source_characters WHERE story_id = ?').all(currentStory.id).map(row => [row.character_id, row.character_key]))
     const next = mergeRuntimeIntoSource(loaded.source, proposed, characterKeyById)
-    return this.save(currentStory.id, next).story
+    return this.save(currentStory.id, next, { expectedDigest: expectedDigest ?? loaded.binding.digest }).story
   }
 
-  updateRuntimeCharacter(characterId, input) {
+  updateRuntimeCharacter(characterId, input, { expectedToken = null } = {}) {
+    const opened = this.getRuntimeCharacter(characterId)
+    assert(!expectedToken || expectedToken === opened.edit_token, 'The Character or one of its Story source files changed after you opened the editor. Reload before saving so newer edits are not overwritten.', 409, 'character_edit_conflict')
     const bindings = this.#characterBindings(characterId)
     for (const binding of bindings) loadStorySourcePath(binding.source_path)
     const character = this.repository.updateCharacter(characterId, input)
@@ -983,7 +1020,7 @@ export class StorySourceService {
 
   #characterBindings(characterId) {
     return this.db.raw.prepare(`
-      SELECT ssc.story_id, ssc.character_key, ss.story_key, ss.source_path
+      SELECT ssc.story_id, ssc.character_key, ss.story_key, ss.source_path, ss.source_kind
       FROM story_source_characters ssc
       JOIN story_sources ss ON ss.story_id = ssc.story_id
       WHERE ssc.character_id = ?

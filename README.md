@@ -56,6 +56,7 @@ That gives you:
 |---|---|
 | Meet a character | Start with an editable character profile and keep the relationship across sessions. |
 | Enter a story | Play narrator-only, single-character, or ensemble stories through the same simple interface. |
+| Edit anything you authored | Reopen any published Character or Story and change its voice, private intent, Cast, Lore, Scenes, Actions, Agendas, or metadata. |
 | Create without code | Describe a character or story in ordinary language, review the draft, then publish it. |
 | Choose any AI | Switch between connected APIs and models without changing your characters or saves. |
 | Tune the response | Use presets for style, sampling, reasoning strength, initiative, and context behavior. |
@@ -106,6 +107,8 @@ Every published Story has an editable `harness-tavern-story/v2` source:
 - edit with the built-in editor or any text editor;
 - validate and version the files with Git;
 - export without provider credentials or local database identifiers.
+
+The visual Character and Story workspaces cover the complete authored model after publication. System identifiers, causal event history, and saved playthrough facts remain separate and read-only, so editing the work never rewrites what already happened in a playthrough.
 
 This keeps authored content separate from conversations and playthrough state. Learn more in [Editable Story sources](docs/STORY_SOURCES.md) or open the [included multi-file example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
 

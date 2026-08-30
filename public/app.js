@@ -10,6 +10,7 @@ const state = {
   conversation: null,
   streaming: false,
   modal: null,
+  modalCloseGuard: null,
   selectedTemplate: null,
   importContent: null,
   migrationId: null,
@@ -23,6 +24,10 @@ function toast(message, duration = 3200) {
   node.classList.remove('hidden')
   clearTimeout(toast.timer)
   toast.timer = setTimeout(() => node.classList.add('hidden'), duration)
+}
+
+function uiText(zh, en) {
+  return getLocale() === 'zh' ? zh : en
 }
 
 function applyTranslations() {
@@ -76,17 +81,23 @@ function closeMobileNav() {
   $('#mobileScrim').classList.add('hidden')
 }
 
-function openModal(title, content, { wide = false, autoFocus = true } = {}) {
+function openModal(title, content, { wide = false, workspace = false, autoFocus = true, beforeClose = null } = {}) {
   $('#modalTitle').textContent = title
   clear($('#modalBody')).append(content)
   $('#modal').classList.toggle('modal-wide', wide)
+  $('#modal').classList.toggle('modal-workspace', workspace)
+  $('#modalBody').classList.toggle('workspace-body', workspace)
   $('#modalLayer').classList.remove('hidden')
   state.modal = title
+  state.modalCloseGuard = beforeClose
   if (autoFocus) setTimeout(() => $('#modalBody input, #modalBody textarea, #modalBody select')?.focus(), 20)
 }
-function closeModal() {
+function closeModal({ force = false } = {}) {
+  if (!force && state.modalCloseGuard && state.modalCloseGuard() === false) return false
   $('#modalLayer').classList.add('hidden')
   state.modal = null
+  state.modalCloseGuard = null
+  return true
 }
 function openDrawer(title, content) {
   $('#drawerTitle').textContent = title
@@ -238,6 +249,105 @@ function renderAll() {
   renderSettings()
 }
 
+function parseEditorJson(source, label, { array = false } = {}) {
+  let value
+  try { value = JSON.parse(String(source || '').trim() || (array ? '[]' : '{}')) } catch (error) {
+    throw new Error(`${label}: ${uiText('JSON 格式无效', 'invalid JSON')} (${error.message})`)
+  }
+  if (array ? !Array.isArray(value) : !value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} ${array ? uiText('必须是 JSON 数组。', 'must be a JSON array.') : uiText('必须是 JSON 对象。', 'must be a JSON object.')}`)
+  }
+  return value
+}
+
+function nextEditorKey(prefix, items, fields = ['id', 'key']) {
+  const used = new Set(items.flatMap(item => fields.map(field => item?.[field]).filter(Boolean)))
+  let index = items.length + 1
+  let candidate = `${prefix}-${index}`
+  while (used.has(candidate)) candidate = `${prefix}-${++index}`
+  return candidate
+}
+
+function openContentEditor({ modalTitle, eyebrow, title, summary, tabs, renderPanel, onSave, headerAside = null }) {
+  let active = tabs[0].id
+  let dirty = false
+  let busy = false
+  const root = el('form', { class: 'editor-workbench' })
+  const heading = el('h2', { text: title })
+  const status = el('span', { class: 'editor-save-state clean', role: 'status', 'aria-live': 'polite', text: uiText('已载入最新内容', 'Latest content loaded') })
+  const nav = el('nav', { class: 'editor-tabs', role: 'tablist', 'aria-label': uiText('编辑区域', 'Editor sections') })
+  const panel = el('div', { class: 'editor-panel', role: 'tabpanel' })
+  const saveButton = el('button', { type: 'submit', disabled: true, text: uiText('保存修改', 'Save changes') })
+  const doneButton = el('button', { type: 'button', class: 'secondary', text: uiText('完成', 'Done'), on: { click: () => closeModal() } })
+
+  const markDirty = () => {
+    if (dirty) return
+    dirty = true
+    saveButton.disabled = false
+    status.className = 'editor-save-state dirty'
+    status.textContent = uiText('有未保存修改', 'Unsaved changes')
+  }
+  const draw = () => {
+    clear(nav).append(...tabs.map(tab => el('button', {
+      type: 'button',
+      role: 'tab',
+      'aria-selected': active === tab.id ? 'true' : 'false',
+      class: active === tab.id ? 'active' : '',
+      text: tab.label,
+      on: { click: () => { active = tab.id; draw() } },
+    })))
+    clear(panel).append(renderPanel(active, { markDirty, redraw: draw }))
+  }
+
+  root.addEventListener('input', markDirty)
+  root.addEventListener('submit', async event => {
+    event.preventDefault()
+    if (busy || !dirty) return
+    const invalid = root.querySelector(':invalid')
+    if (invalid) { invalid.reportValidity(); return }
+    busy = true
+    saveButton.disabled = true
+    status.className = 'editor-save-state saving'
+    status.textContent = uiText('正在验证并保存…', 'Validating and saving…')
+    try {
+      const result = await onSave()
+      dirty = false
+      heading.textContent = result?.title || heading.textContent
+      status.className = 'editor-save-state clean'
+      status.textContent = uiText('刚刚已保存', 'Saved just now')
+      toast(uiText('内容已验证并保存', 'Content validated and saved'))
+    } catch (error) {
+      saveButton.disabled = false
+      status.className = 'editor-save-state conflict'
+      status.textContent = ['story_source_conflict', 'character_edit_conflict'].includes(error.code)
+        ? uiText('发现较新的修改，请重新载入', 'Newer changes found — reload first')
+        : uiText('保存失败', 'Save failed')
+      toast(error.message, 7000)
+    } finally { busy = false }
+  })
+
+  root.append(
+    el('header', { class: 'editor-masthead' },
+      el('div', {}, el('p', { class: 'eyebrow', text: eyebrow }), heading, el('p', { text: summary })),
+      headerAside,
+    ),
+    nav,
+    panel,
+    el('footer', { class: 'editor-savebar' }, status, el('div', { class: 'editor-save-actions' }, doneButton, saveButton)),
+  )
+  draw()
+  openModal(modalTitle, root, {
+    workspace: true,
+    autoFocus: false,
+    beforeClose: () => !dirty || confirm(uiText('放弃尚未保存的修改？', 'Discard unsaved changes?')),
+  })
+  return {
+    markDirty,
+    redraw: draw,
+    get dirty() { return dirty },
+  }
+}
+
 async function openCharacterProfile(characterId) {
   const character = await api(`/api/characters/${encodeURIComponent(characterId)}`)
   const recent = state.boot.home.continue.find(item => item.cast?.some(member => member.id === character.id) && !item.story_id)
@@ -251,11 +361,87 @@ async function openCharacterProfile(characterId) {
     el('div', { class: 'profile-actions' },
       recent ? el('button', { text: t('continueChat'), on: { click: () => { closeModal(); openConversation(recent.id) } } }) : null,
       el('button', { class: recent ? 'secondary' : '', text: t('startChat'), on: { click: () => startCharacterChat(character) } }),
+      el('button', { class: 'secondary', text: uiText('编辑角色', 'Edit character'), on: { click: () => openCharacterEditor(character.id) } }),
       el('button', { class: 'secondary', text: fav ? t('unfavorite') : t('favorite'), on: { click: () => toggleFavorite('character', character.id, !fav, () => openCharacterProfile(character.id)) } }),
       el('button', { class: 'secondary', text: t('share'), on: { click: () => openShare('character', character.id, character.name) } }),
     ),
   )
   openModal(character.name, content)
+}
+
+async function openCharacterEditor(characterId) {
+  let loaded = await api(`/api/creator/characters/${encodeURIComponent(characterId)}`)
+  let data = structuredClone(loaded.character)
+  let metadataSource = JSON.stringify(data.metadata || {}, null, 2)
+  let extensionsSource = JSON.stringify(data.extensions || {}, null, 2)
+  const tabs = [
+    { id: 'identity', label: uiText('身份', 'Identity') },
+    { id: 'voice', label: uiText('声音与相遇', 'Voice & meeting') },
+    { id: 'intent', label: uiText('意图与隐私', 'Intent & privacy') },
+    { id: 'advanced', label: uiText('高级', 'Advanced') },
+  ]
+  const renderPanel = (active) => {
+    if (active === 'identity') return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('这个角色是谁', 'Who this character is') }), el('p', { text: uiText('这些内容构成角色在内容库和分享预览中的基本形象。', 'These fields shape the Character’s Library profile and public presentation.') }))),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('角色名称', 'Character name') }), el('input', { required: true, maxlength: 120, value: data.name, on: { input: event => { data.name = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('稳定内容 Key', 'Stable content key') }), el('input', { value: data.slug, readOnly: true }), el('small', { text: uiText('系统用于文件引用与存档关联，不随显示名称改变。', 'Used by files and saves; it does not change with the display name.') })),
+      ),
+      el('label', {}, el('span', { text: uiText('公开介绍', 'Public description') }), el('textarea', { rows: 5, maxlength: 20000, value: data.description, on: { input: event => { data.description = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('外观', 'Appearance') }), el('textarea', { rows: 4, maxlength: 10000, value: data.appearance, on: { input: event => { data.appearance = event.target.value } } })),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('头像地址', 'Avatar URL') }), el('input', { type: 'url', maxlength: 200000, value: data.avatar_url, placeholder: 'https://…', on: { input: event => { data.avatar_url = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('标签', 'Tags') }), el('input', { maxlength: 3200, value: (data.tags || []).join(', '), placeholder: uiText('例如：侦探, 慢热, 科幻', 'For example: detective, slow-burn, sci-fi'), on: { input: event => { data.tags = event.target.value.split(',').map(item => item.trim()).filter(Boolean) } } })),
+      ),
+    )
+    if (active === 'voice') return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('行为方式与表达', 'Behavior and expression') }), el('p', { text: uiText('描述稳定的性格、说话方式，以及第一次相遇如何发生。', 'Define stable behavior, voice, and how the first meeting begins.') }))),
+      el('label', {}, el('span', { text: uiText('性格与行为', 'Personality and behavior') }), el('textarea', { rows: 6, maxlength: 20000, value: data.personality, on: { input: event => { data.personality = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('说话风格', 'Speech style') }), el('textarea', { rows: 5, maxlength: 10000, value: data.speech_style, on: { input: event => { data.speech_style = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('相遇场景', 'Meeting scenario') }), el('textarea', { rows: 6, maxlength: 20000, value: data.scenario, on: { input: event => { data.scenario = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('第一条消息', 'First message') }), el('textarea', { rows: 7, maxlength: 20000, value: data.first_message, on: { input: event => { data.first_message = event.target.value } } })),
+    )
+    if (active === 'intent') return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('持续意图与创作者私有内容', 'Durable intent and creator-private content') }), el('p', { text: uiText('每行一项。秘密和创作者备注不会出现在普通角色详情中。', 'Use one item per line. Secrets and creator notes stay out of the ordinary Character profile.') }))),
+      el('label', {}, el('span', { text: uiText('长期目标', 'Long-term goals') }), el('textarea', { rows: 6, value: (data.goals || []).join('\n'), on: { input: event => { data.goals = lines(event.target.value) } } })),
+      el('label', {}, el('span', { text: uiText('秘密与私人事实', 'Secrets and private facts') }), el('textarea', { rows: 6, value: (data.secrets || []).join('\n'), on: { input: event => { data.secrets = lines(event.target.value) } } })),
+      el('label', {}, el('span', { text: uiText('不可越过的边界', 'Boundaries') }), el('textarea', { rows: 6, value: (data.boundaries || []).join('\n'), on: { input: event => { data.boundaries = lines(event.target.value) } } })),
+      el('label', {}, el('span', { text: uiText('创作者备注', 'Creator notes') }), el('textarea', { rows: 6, maxlength: 20000, value: data.creator_notes, on: { input: event => { data.creator_notes = event.target.value } } })),
+    )
+    return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('高级兼容数据', 'Advanced compatibility data') }), el('p', { text: uiText('用于 Character Card 扩展和生态兼容。保存前会严格检查 JSON。', 'Used for Character Card extensions and ecosystem compatibility. JSON is validated before saving.') }))),
+      loaded.bindings.length ? el('div', { class: 'editor-notice' },
+        el('strong', { text: uiText(`该角色属于 ${loaded.bindings.length} 个 Story Source`, `Used by ${loaded.bindings.length} Story source${loaded.bindings.length === 1 ? '' : 's'}`) }),
+        el('p', { text: uiText('保存时会同步更新这些标准文件；如果文件在编辑期间被外部修改，系统会拒绝覆盖。', 'Saving updates those standard files. If one changed outside the Tavern while this editor was open, the save is rejected instead of overwriting it.') }),
+        el('ul', {}, ...loaded.bindings.map(binding => el('li', { text: `${binding.story_title} · ${binding.character_key}` }))),
+      ) : el('div', { class: 'editor-notice' }, el('strong', { text: uiText('独立角色', 'Standalone Character') }), el('p', { text: uiText('当前没有 Story Source 引用该角色。', 'No Story source currently references this Character.') })),
+      el('label', {}, el('span', { text: 'Metadata JSON' }), el('textarea', { class: 'json-editor', rows: 12, spellcheck: false, value: metadataSource, on: { input: event => { metadataSource = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Extensions JSON' }), el('textarea', { class: 'json-editor', rows: 12, spellcheck: false, value: extensionsSource, on: { input: event => { extensionsSource = event.target.value } } })),
+    )
+  }
+  openContentEditor({
+    modalTitle: uiText('编辑角色', 'Edit Character'),
+    eyebrow: uiText('角色工作台', 'Character workspace'),
+    title: data.name,
+    summary: uiText('所有创作字段都可以修改；系统身份、对话历史和审计记录保持只读。', 'Every authored field is editable; system identity, conversation history, and audit records remain read-only.'),
+    tabs,
+    renderPanel,
+    headerAside: avatar(data, 'lg'),
+    onSave: async () => {
+      if (!String(data.name || '').trim()) throw new Error(uiText('角色名称不能为空。', 'Character name is required.'))
+      data.metadata = parseEditorJson(metadataSource, 'Metadata')
+      data.extensions = parseEditorJson(extensionsSource, 'Extensions')
+      loaded = await api(`/api/creator/characters/${encodeURIComponent(characterId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ character: data, expected_token: loaded.edit_token }),
+      })
+      data = structuredClone(loaded.character)
+      metadataSource = JSON.stringify(data.metadata || {}, null, 2)
+      extensionsSource = JSON.stringify(data.extensions || {}, null, 2)
+      await refresh()
+      return { title: data.name }
+    },
+  })
 }
 
 function personaOptions(selectedId = '') {
@@ -292,13 +478,264 @@ async function openStoryDetail(storyId) {
     el('div', { class: 'profile-actions' },
       latest?.current_conversation_id ? el('button', { text: t('continue'), on: { click: () => { closeModal(); openConversation(latest.current_conversation_id) } } }) : null,
       el('button', { class: latest ? 'secondary' : '', text: latest ? t('newPlaythrough') : t('beginStory'), on: { click: () => startStory(story) } }),
+      el('button', { class: 'secondary', text: uiText('编辑故事', 'Edit story'), on: { click: () => openStoryEditor(story.id) } }),
       el('button', { class: 'secondary', text: fav ? t('unfavorite') : t('favorite'), on: { click: () => toggleFavorite('story', story.id, !fav, () => openStoryDetail(story.id)) } }),
-      el('button', { class: 'secondary', text: 'Edit Story source', on: { click: () => openStorySourceEditor(story) } }),
       el('button', { class: 'secondary', text: t('share'), on: { click: () => openShare('story', story.id, story.title) } }),
       el('button', { class: 'secondary', text: t('saveAsTemplate'), on: { click: () => saveStoryAsTemplate(story) } }),
     ),
   )
   openModal(story.title, content, { wide: true })
+}
+
+async function openStoryEditor(storyId) {
+  let loaded = await api(`/api/creator/stories/${encodeURIComponent(storyId)}`)
+  let story = structuredClone(loaded.story)
+  let editor
+  let selectedCharacterId = ''
+  let castMetadataSources = new Map()
+  let jsonSources = {}
+  const resetJsonSources = () => {
+    castMetadataSources = new Map(story.cast.map(member => [member.character_id, JSON.stringify(member.metadata || {}, null, 2)]))
+    jsonSources = {
+      initial_state: JSON.stringify(story.initial_state || {}, null, 2),
+      world_schema: JSON.stringify(story.runtime?.world_schema || {}, null, 2),
+      actions: JSON.stringify(story.runtime?.actions || [], null, 2),
+      agendas: JSON.stringify(story.runtime?.agendas || [], null, 2),
+      prompt_graph: JSON.stringify(story.runtime?.prompt_graph || {}, null, 2),
+      state_visibility: JSON.stringify(story.runtime?.state_visibility || [], null, 2),
+      metadata: JSON.stringify(story.metadata || {}, null, 2),
+      share_policy: JSON.stringify(story.share_policy || {}, null, 2),
+    }
+  }
+  resetJsonSources()
+
+  const tabs = [
+    { id: 'overview', label: uiText('概览', 'Overview') },
+    { id: 'cast', label: uiText('角色阵容', 'Cast') },
+    { id: 'world', label: uiText('世界与知识', 'World & lore') },
+    { id: 'scenes', label: uiText('场景', 'Scenes') },
+    { id: 'causality', label: uiText('因果规则', 'Causality') },
+    { id: 'advanced', label: uiText('高级', 'Advanced') },
+  ]
+
+  const renderPanel = (active, { markDirty, redraw }) => {
+    if (active === 'overview') return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('故事入口', 'Story invitation') }), el('p', { text: uiText('这些内容决定玩家在内容库中看到什么，以及进入故事时理解什么。', 'These fields shape what players see in the Library and understand before entering.') }))),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('故事标题', 'Story title') }), el('input', { required: true, maxlength: 200, value: story.title, on: { input: event => { story.title = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('稳定 Story Key', 'Stable Story key') }), el('input', { value: story.slug, readOnly: true }), el('small', { text: uiText('用于标准文件与存档关联；需要改名时请在源文件项目中操作。', 'Used by standard files and saves; rename it through the source project when required.') })),
+      ),
+      el('label', {}, el('span', { text: uiText('一句话吸引点', 'One-line hook') }), el('textarea', { rows: 2, maxlength: 1000, value: story.hook, on: { input: event => { story.hook = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('简短摘要', 'Short summary') }), el('textarea', { rows: 3, maxlength: 4000, value: story.summary, on: { input: event => { story.summary = event.target.value } } })),
+      el('label', {}, el('span', { text: uiText('完整前提', 'Full premise') }), el('textarea', { rows: 7, maxlength: 30000, value: story.premise, on: { input: event => { story.premise = event.target.value } } })),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('类型', 'Genre') }), el('input', { maxlength: 300, value: story.genre, on: { input: event => { story.genre = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('氛围与语气', 'Tone') }), el('input', { maxlength: 1000, value: story.tone, on: { input: event => { story.tone = event.target.value } } })),
+      ),
+      el('label', {}, el('span', { text: uiText('玩家身份', 'Player role') }), el('textarea', { rows: 3, maxlength: 5000, value: story.player_role, on: { input: event => { story.player_role = event.target.value } } })),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('封面地址', 'Cover URL') }), el('input', { type: 'url', maxlength: 200000, value: story.cover_url, placeholder: 'https://…', on: { input: event => { story.cover_url = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('可见性', 'Visibility') }), el('select', { value: story.visibility, on: { change: event => { story.visibility = event.target.value } } },
+          el('option', { value: 'private', text: uiText('私有', 'Private') }),
+          el('option', { value: 'unlisted', text: uiText('不公开列出', 'Unlisted') }),
+          el('option', { value: 'public', text: uiText('公开', 'Public') }),
+        )),
+      ),
+      el('div', { class: 'form-row' },
+        el('label', {}, el('span', { text: uiText('标签', 'Tags') }), el('input', { value: (story.tags || []).join(', '), on: { input: event => { story.tags = event.target.value.split(',').map(item => item.trim()).filter(Boolean) } } })),
+        el('label', {}, el('span', { text: uiText('内容提示', 'Content notes') }), el('input', { value: (story.content_warnings || []).join(', '), on: { input: event => { story.content_warnings = event.target.value.split(',').map(item => item.trim()).filter(Boolean) } } })),
+      ),
+    )
+
+    if (active === 'cast') {
+      const used = new Set(story.cast.map(member => member.character_id))
+      const available = state.boot.characters.filter(character => !used.has(character.id))
+      if (!available.some(character => character.id === selectedCharacterId)) selectedCharacterId = available[0]?.id || ''
+      const select = el('select', { value: selectedCharacterId, disabled: !available.length, on: { change: event => { selectedCharacterId = event.target.value } } },
+        ...available.map(character => el('option', { value: character.id, text: character.name })),
+      )
+      const add = () => {
+        const character = state.boot.characters.find(item => item.id === selectedCharacterId)
+        if (!character) return
+        story.cast.push({ character_id: character.id, role: '', public_context: '', private_context: '', metadata: {}, character })
+        castMetadataSources.set(character.id, '{}')
+        selectedCharacterId = ''
+        markDirty(); redraw()
+      }
+      return el('div', { class: 'editor-section' },
+        el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('谁在这个故事中行动', 'Who acts in this Story') }), el('p', { text: uiText('可以添加任意数量的现有角色，调整顺序，并分别维护公开与私人上下文。', 'Add any number of existing Characters, reorder them, and maintain public and private context separately.') }))),
+        el('div', { class: 'editor-add-row' }, select, el('button', { type: 'button', class: 'secondary', disabled: !available.length, text: uiText('加入角色', 'Add Character'), on: { click: add } })),
+        el('div', { class: 'editor-collection' }, ...story.cast.map((member, index) => el('article', { class: 'editor-item' },
+          el('div', { class: 'editor-item-heading' },
+            el('div', { class: 'editor-person' }, avatar(member.character, 'md'), el('div', {}, el('strong', { text: member.character.name }), el('small', { text: member.character.description || uiText('角色内容可在角色工作台单独编辑。', 'Character content is editable in its own workspace.') }))),
+            el('div', { class: 'editor-item-actions' },
+              el('button', { type: 'button', class: 'secondary compact', disabled: index === 0, title: uiText('上移', 'Move up'), text: '↑', on: { click: () => { story.cast.splice(index - 1, 0, story.cast.splice(index, 1)[0]); markDirty(); redraw() } } }),
+              el('button', { type: 'button', class: 'secondary compact', disabled: index === story.cast.length - 1, title: uiText('下移', 'Move down'), text: '↓', on: { click: () => { story.cast.splice(index + 1, 0, story.cast.splice(index, 1)[0]); markDirty(); redraw() } } }),
+              el('button', { type: 'button', class: 'danger compact', disabled: story.cast.length === 1, text: uiText('移除', 'Remove'), on: { click: () => { if (story.cast.length === 1) return; story.cast.splice(index, 1); castMetadataSources.delete(member.character_id); markDirty(); redraw() } } }),
+            ),
+          ),
+          el('label', {}, el('span', { text: uiText('故事角色定位', 'Role in this Story') }), el('input', { maxlength: 1000, value: member.role, on: { input: event => { member.role = event.target.value } } })),
+          el('div', { class: 'form-row' },
+            el('label', {}, el('span', { text: uiText('所有人可知', 'Public context') }), el('textarea', { rows: 4, maxlength: 10000, value: member.public_context, on: { input: event => { member.public_context = event.target.value } } })),
+            el('label', {}, el('span', { text: uiText('仅该角色可知', 'Private context') }), el('textarea', { rows: 4, maxlength: 10000, value: member.private_context, on: { input: event => { member.private_context = event.target.value } } })),
+          ),
+          el('details', { class: 'advanced-details' }, el('summary', { text: 'Cast metadata JSON' }), el('textarea', { class: 'json-editor', rows: 6, spellcheck: false, value: castMetadataSources.get(member.character_id) || '{}', on: { input: event => { castMetadataSources.set(member.character_id, event.target.value) } } })),
+        ))),
+      )
+    }
+
+    if (active === 'world') {
+      story.lore ||= []
+      const addLore = () => {
+        const id = nextEditorKey('lore', story.lore)
+        story.lore.push({ id, title: uiText('新的知识条目', 'New lore entry'), content: '', keywords: [], visibility: 'public' })
+        markDirty(); redraw()
+      }
+      return el('div', { class: 'editor-section' },
+        el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('世界承诺与知识边界', 'World promises and knowledge boundaries') }), el('p', { text: uiText('世界规则约束叙事；每条 Lore 都有明确可见范围。', 'World rules constrain narration; every Lore entry has an explicit audience.') }))),
+        el('label', {}, el('span', { text: uiText('开场情况', 'Opening situation') }), el('textarea', { required: true, rows: 7, maxlength: 30000, value: story.opening_scene, on: { input: event => { story.opening_scene = event.target.value } } })),
+        el('label', {}, el('span', { text: uiText('世界规则（每行一条）', 'World rules — one per line') }), el('textarea', { rows: 7, value: (story.world_rules || []).join('\n'), on: { input: event => { story.world_rules = lines(event.target.value) } } })),
+        el('div', { class: 'editor-subheading' }, el('div', {}, el('h3', { text: 'Lore' }), el('p', { text: uiText('公开、私人或仅 Director 可见的世界知识。', 'World knowledge can be public, private, or Director-only.') })), el('button', { type: 'button', class: 'secondary compact', text: uiText('＋ 添加 Lore', '＋ Add lore'), on: { click: addLore } })),
+        el('div', { class: 'editor-collection' }, ...story.lore.map((entry, index) => el('article', { class: 'editor-item' },
+          el('div', { class: 'editor-item-heading' }, el('strong', { text: entry.title || `Lore ${index + 1}` }), el('button', { type: 'button', class: 'danger compact', text: uiText('移除', 'Remove'), on: { click: () => { story.lore.splice(index, 1); markDirty(); redraw() } } })),
+          el('div', { class: 'form-row' },
+            el('label', {}, el('span', { text: uiText('稳定 Key', 'Stable key') }), el('input', { required: true, maxlength: 120, value: entry.id || entry.key, on: { input: event => { entry.id = event.target.value; delete entry.key } } })),
+            el('label', {}, el('span', { text: uiText('标题', 'Title') }), el('input', { maxlength: 300, value: entry.title, on: { input: event => { entry.title = event.target.value } } })),
+          ),
+          el('div', { class: 'form-row' },
+            el('label', {}, el('span', { text: uiText('可见范围', 'Visibility') }), el('select', { value: entry.visibility || 'public', on: { change: event => { entry.visibility = event.target.value } } }, el('option', { value: 'public', text: uiText('公开', 'Public') }), el('option', { value: 'private', text: uiText('角色私人上下文', 'Private') }), el('option', { value: 'director', text: 'Director only' }))),
+            el('label', {}, el('span', { text: uiText('关键词', 'Keywords') }), el('input', { value: (entry.keywords || []).join(', '), on: { input: event => { entry.keywords = event.target.value.split(',').map(item => item.trim()).filter(Boolean) } } })),
+          ),
+          el('label', {}, el('span', { text: uiText('内容', 'Content') }), el('textarea', { rows: 6, maxlength: 10000, value: entry.content, on: { input: event => { entry.content = event.target.value } } })),
+          el('label', { class: 'checkbox-field' }, el('input', { type: 'checkbox', checked: Boolean(entry.constant), on: { change: event => { entry.constant = event.target.checked } } }), el('span', { text: uiText('始终加入相关上下文', 'Always include when relevant') })),
+        ))),
+      )
+    }
+
+    if (active === 'scenes') {
+      story.scenes ||= []
+      const addScene = () => {
+        const id = nextEditorKey('scene', story.scenes)
+        story.scenes.push({ id, title: uiText('新场景', 'New scene'), location: '', time: '', objective: '', content: '', active_character_ids: story.cast.map(member => member.character_id) })
+        markDirty(); redraw()
+      }
+      return el('div', { class: 'editor-section' },
+        el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('可到达的故事场景', 'Reachable Story scenes') }), el('p', { text: uiText('场景是可进入的环境，不是要求模型照着执行的固定剧本。', 'Scenes are environments to reach, not a fixed script for the model to execute.') })), el('button', { type: 'button', class: 'secondary compact', text: uiText('＋ 添加场景', '＋ Add scene'), on: { click: addScene } })),
+        story.scenes.length ? el('div', { class: 'editor-collection' }, ...story.scenes.map((scene, index) => el('article', { class: 'editor-item' },
+          el('div', { class: 'editor-item-heading' }, el('strong', { text: scene.title || `Scene ${index + 1}` }), el('div', { class: 'editor-item-actions' },
+            el('button', { type: 'button', class: 'secondary compact', disabled: index === 0, text: '↑', on: { click: () => { story.scenes.splice(index - 1, 0, story.scenes.splice(index, 1)[0]); markDirty(); redraw() } } }),
+            el('button', { type: 'button', class: 'secondary compact', disabled: index === story.scenes.length - 1, text: '↓', on: { click: () => { story.scenes.splice(index + 1, 0, story.scenes.splice(index, 1)[0]); markDirty(); redraw() } } }),
+            el('button', { type: 'button', class: 'danger compact', text: uiText('移除', 'Remove'), on: { click: () => { story.scenes.splice(index, 1); markDirty(); redraw() } } }),
+          )),
+          el('div', { class: 'form-row' },
+            el('label', {}, el('span', { text: uiText('稳定 Key', 'Stable key') }), el('input', { required: true, maxlength: 120, value: scene.id || scene.key, on: { input: event => { scene.id = event.target.value; delete scene.key } } })),
+            el('label', {}, el('span', { text: uiText('场景标题', 'Scene title') }), el('input', { required: true, maxlength: 300, value: scene.title, on: { input: event => { scene.title = event.target.value } } })),
+          ),
+          el('div', { class: 'form-row' },
+            el('label', {}, el('span', { text: uiText('地点', 'Location') }), el('input', { maxlength: 1000, value: scene.location, on: { input: event => { scene.location = event.target.value } } })),
+            el('label', {}, el('span', { text: uiText('时间', 'Time') }), el('input', { maxlength: 1000, value: scene.time, on: { input: event => { scene.time = event.target.value } } })),
+          ),
+          el('label', {}, el('span', { text: uiText('场景目标或压力', 'Scene objective or pressure') }), el('textarea', { rows: 4, maxlength: 10000, value: scene.objective, on: { input: event => { scene.objective = event.target.value } } })),
+          el('label', {}, el('span', { text: 'Markdown Scene' }), el('textarea', { rows: 8, maxlength: 100000, value: scene.content || '', on: { input: event => { scene.content = event.target.value } } })),
+          el('fieldset', { class: 'editor-checklist' }, el('legend', { text: uiText('活跃角色', 'Active Characters') }), ...story.cast.map(member => el('label', { class: 'checkbox-field' }, el('input', { type: 'checkbox', checked: (scene.active_character_ids || []).includes(member.character_id), on: { change: event => {
+            const activeIds = new Set(scene.active_character_ids || [])
+            if (event.target.checked) activeIds.add(member.character_id); else activeIds.delete(member.character_id)
+            scene.active_character_ids = [...activeIds]
+          } } }), el('span', { text: member.character.name })))),
+        ))) : el('div', { class: 'editor-empty' }, el('p', { text: uiText('当前故事没有场景文件；开场情况仍然可以启动故事。', 'This Story has no scene files yet; the opening situation can still begin play.') })),
+      )
+    }
+
+    if (active === 'causality') return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('事实、行动与持续意图', 'Facts, Actions, and durable Intent') }), el('p', { text: uiText('这里编辑真正决定因果行为的结构化定义；每个 JSON 区域都会在保存前验证。', 'These structured definitions determine causal behavior. Every JSON section is validated before saving.') }))),
+      el('label', {}, el('span', { text: 'Initial State JSON' }), el('textarea', { class: 'json-editor', rows: 12, spellcheck: false, value: jsonSources.initial_state, on: { input: event => { jsonSources.initial_state = event.target.value } } })),
+      el('label', {}, el('span', { text: 'World Schema JSON' }), el('textarea', { class: 'json-editor', rows: 10, spellcheck: false, value: jsonSources.world_schema, on: { input: event => { jsonSources.world_schema = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Actions JSON' }), el('textarea', { class: 'json-editor', rows: 16, spellcheck: false, value: jsonSources.actions, on: { input: event => { jsonSources.actions = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Agendas JSON' }), el('textarea', { class: 'json-editor', rows: 16, spellcheck: false, value: jsonSources.agendas, on: { input: event => { jsonSources.agendas = event.target.value } } })),
+      el('label', {}, el('span', { text: 'State Visibility JSON' }), el('textarea', { class: 'json-editor', rows: 10, spellcheck: false, value: jsonSources.state_visibility, on: { input: event => { jsonSources.state_visibility = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Prompt Graph JSON' }), el('textarea', { class: 'json-editor', rows: 10, spellcheck: false, value: jsonSources.prompt_graph, on: { input: event => { jsonSources.prompt_graph = event.target.value } } })),
+    )
+
+    return el('div', { class: 'editor-section' },
+      el('div', { class: 'editor-section-heading' }, el('div', {}, el('h3', { text: uiText('创作者与文件级控制', 'Creator and file-level control') }), el('p', { text: uiText('普通编辑器覆盖完整运行时模型；标准 Story Source 仍是最底层的可移植创作格式。', 'The visual editor covers the complete runtime model; the standard Story source remains the lowest-level portable authoring format.') }))),
+      el('div', { class: 'source-status' }, el('div', {}, el('strong', { text: `${loaded.binding.story_key} · ${loaded.binding.kind}` }), el('small', { text: loaded.binding.path })), el('span', { class: 'status-pill active', text: uiText('已绑定标准文件', 'Bound source') })),
+      el('label', {}, el('span', { text: uiText('创作者备注', 'Author notes') }), el('textarea', { rows: 8, maxlength: 30000, value: story.author_notes, on: { input: event => { story.author_notes = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Metadata JSON' }), el('textarea', { class: 'json-editor', rows: 12, spellcheck: false, value: jsonSources.metadata, on: { input: event => { jsonSources.metadata = event.target.value } } })),
+      el('label', {}, el('span', { text: 'Share Policy JSON' }), el('textarea', { class: 'json-editor', rows: 10, spellcheck: false, value: jsonSources.share_policy, on: { input: event => { jsonSources.share_policy = event.target.value } } })),
+      el('div', { class: 'editor-notice' },
+        el('strong', { text: uiText('需要直接控制文件资源？', 'Need direct file-level control?') }),
+        el('p', { text: uiText('原始编辑器允许修改 Character Card、Lorebook、Markdown Scene、Action、Agenda 和稳定 Key。', 'The source editor can directly modify Character Cards, Lorebooks, Markdown Scenes, Actions, Agendas, and stable keys.') }),
+        el('button', { type: 'button', class: 'secondary', text: uiText('打开完整 Story Source', 'Open complete Story source'), on: { click: async () => {
+          if (editor.dirty && !confirm(uiText('当前可视化修改尚未保存。放弃这些修改并打开源文件？', 'Visual changes are not saved. Discard them and open the source?'))) return
+          await openStorySourceEditor({ id: story.id, title: story.title })
+        } } }),
+      ),
+    )
+  }
+
+  editor = openContentEditor({
+    modalTitle: uiText('编辑故事', 'Edit Story'),
+    eyebrow: uiText('故事工作台', 'Story workspace'),
+    title: story.title,
+    summary: uiText('从玩家入口到角色私有知识、场景文件和因果规则，所有创作内容都可以修改。', 'Edit everything from the player invitation to cast secrets, scene files, and causal rules.'),
+    tabs,
+    renderPanel,
+    headerAside: castStack(story.cast, 'md'),
+    onSave: async () => {
+      if (!String(story.title || '').trim()) throw new Error(uiText('故事标题不能为空。', 'Story title is required.'))
+      if (!String(story.opening_scene || '').trim()) throw new Error(uiText('故事需要一个开场情况。', 'The Story requires an opening situation.'))
+      if (!story.cast.length) throw new Error(uiText('故事至少需要一个角色。', 'The Story requires at least one cast member.'))
+      const characterIds = story.cast.map(member => member.character_id)
+      if (new Set(characterIds).size !== characterIds.length) throw new Error(uiText('同一个角色不能在阵容中出现两次。', 'The same Character cannot appear in the cast twice.'))
+      story.initial_state = parseEditorJson(jsonSources.initial_state, 'Initial State')
+      story.metadata = parseEditorJson(jsonSources.metadata, 'Metadata')
+      story.share_policy = parseEditorJson(jsonSources.share_policy, 'Share Policy')
+      story.runtime = {
+        world_schema: parseEditorJson(jsonSources.world_schema, 'World Schema'),
+        actions: parseEditorJson(jsonSources.actions, 'Actions', { array: true }),
+        agendas: parseEditorJson(jsonSources.agendas, 'Agendas', { array: true }),
+        prompt_graph: parseEditorJson(jsonSources.prompt_graph, 'Prompt Graph'),
+        state_visibility: parseEditorJson(jsonSources.state_visibility, 'State Visibility', { array: true }),
+      }
+      const payload = {
+        title: story.title,
+        hook: story.hook,
+        summary: story.summary,
+        premise: story.premise,
+        genre: story.genre,
+        tone: story.tone,
+        opening_scene: story.opening_scene,
+        player_role: story.player_role,
+        world_rules: story.world_rules || [],
+        lore: story.lore || [],
+        initial_state: story.initial_state,
+        author_notes: story.author_notes,
+        content_warnings: story.content_warnings || [],
+        tags: story.tags || [],
+        cover_url: story.cover_url,
+        visibility: story.visibility,
+        scenes: story.scenes || [],
+        metadata: story.metadata,
+        share_policy: story.share_policy,
+        runtime: story.runtime,
+        cast: story.cast.map(member => ({
+          character_id: member.character_id,
+          role: member.role,
+          public_context: member.public_context,
+          private_context: member.private_context,
+          metadata: parseEditorJson(castMetadataSources.get(member.character_id) || '{}', `${member.character.name} cast metadata`),
+        })),
+      }
+      loaded = await api(`/api/creator/stories/${encodeURIComponent(storyId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ story: payload, expected_digest: loaded.binding.digest }),
+      })
+      story = structuredClone(loaded.story)
+      resetJsonSources()
+      await refresh()
+      return { title: story.title }
+    },
+  })
 }
 
 async function openStorySourceEditor(story) {

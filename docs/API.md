@@ -58,12 +58,18 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 
 | Method | Path | Purpose |
 |---|---|---|
+| GET | `/api/creator/characters/:id` | Complete private Character authoring model, source bindings, and optimistic edit token |
+| PUT | `/api/creator/characters/:id` | Validate and save every authored Character field; update bound Story sources when present |
+| GET | `/api/creator/stories/:id` | Complete private Story authoring model and canonical source digest |
+| PUT | `/api/creator/stories/:id` | Validate and save Story overview, Cast, Lore, Scenes, causal runtime, metadata, and source files |
 | POST | `/api/creator/character-drafts` | Plain-language Character draft |
 | POST | `/api/creator/story-drafts` | Plain-language Story and Cast draft |
 | PATCH | `/api/creator/drafts/:id` | Edit/save Draft |
 | DELETE | `/api/creator/drafts/:id` | Delete Draft |
 | POST | `/api/creator/drafts/:id/publish` | Publish Character or Story, optionally start a Story Playthrough |
 | POST | `/api/extensions/from-story/:storyId` | Create declarative template extension |
+
+The complete editor `PUT` routes use an envelope: `{ "character": { ... }, "expected_token": "..." }` or `{ "story": { ... }, "expected_digest": "..." }`. A stale Character token returns `character_edit_conflict`; a stale Story digest returns `story_source_conflict`. This prevents an open browser editor from overwriting newer changes made in another tab or directly in a bound source file. Public Character and Story routes continue to omit creator notes, secrets, private Cast context, initial State, and other author-only fields.
 
 ## Portable import and sharing
 

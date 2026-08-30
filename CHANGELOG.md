@@ -6,11 +6,14 @@ All notable changes are documented here. The format follows Keep a Changelog, an
 
 ### Added
 
+- Complete post-publication Character and Story workbenches covering authored identity, voice, private intent, Cast, Lore, Markdown Scenes, causal State, Actions, Agendas, visibility, compatibility data, and raw canonical source access.
+- Source-aware optimistic conflict protection so browser edits cannot silently overwrite newer Character resources or Story files.
 - A documentation home, ordinary-user getting-started guide, and comprehensive developer guide covering the project's causal construction principles, repository structure, contribution workflow, and change-specific validation expectations.
 - Repository checks for broken local links in Markdown documentation.
 
 ### Changed
 
+- Story Cast editing and persistence no longer applies the former arbitrary 20-member storage ceiling.
 - Rebuilt the English and Chinese READMEs as approachable product introductions with a guided first-run path, migration and ownership explanations, honest deployment boundaries, and audience-based documentation navigation.
 - Expanded the GitHub contribution entrypoint to connect architectural invariants with practical branch, test, security, and pull-request requirements.
 
