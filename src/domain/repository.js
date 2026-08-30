@@ -276,7 +276,7 @@ export class TavernRepository {
 
   #replaceStoryCast(storyId, cast) {
     this.db.raw.prepare('DELETE FROM story_cast WHERE story_id = ?').run(storyId)
-    for (const [index, member] of (Array.isArray(cast) ? cast : []).slice(0, 20).entries()) {
+    for (const [index, member] of (Array.isArray(cast) ? cast : []).entries()) {
       const character = this.getCharacter(member.character_id)
       this.db.raw.prepare(`
         INSERT INTO story_cast(story_id, character_id, role, public_context, private_context, sort_order, metadata_json)

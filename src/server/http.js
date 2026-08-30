@@ -92,6 +92,7 @@ function playerCharacter(character) {
     description: character.description,
     personality: character.personality,
     appearance: character.appearance,
+    scenario: character.scenario,
     first_message: character.first_message,
     speech_style: character.speech_style,
     avatar_url: character.avatar_url,
@@ -279,6 +280,7 @@ function publicBootstrap(app) {
       'persistent-agendas',
       'resumable-turns',
       'sillytavern-full-migration',
+      'complete-content-editors',
     ],
     user_profile: app.repository.getUserProfile(),
     home: playerHome(app),
@@ -387,6 +389,24 @@ export function createHttpServer(app) {
           imports: app.repository.listImports(),
           story_sources: app.storySources.listBindings(),
         })
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/characters/:id'))) {
+        return sendJson(response, 200, app.storySources.getRuntimeCharacter(params.id))
+      }
+      if (method === 'PUT' && (params = matchPath(pathname, '/api/creator/characters/:id'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        const { character, expected_token: expectedToken, ...fields } = input
+        app.storySources.updateRuntimeCharacter(params.id, character ?? fields, { expectedToken })
+        return sendJson(response, 200, app.storySources.getRuntimeCharacter(params.id))
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/stories/:id'))) {
+        return sendJson(response, 200, app.storySources.getRuntimeStory(params.id))
+      }
+      if (method === 'PUT' && (params = matchPath(pathname, '/api/creator/stories/:id'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        const { story, expected_digest: expectedDigest, ...fields } = input
+        app.storySources.updateRuntimeStory(params.id, story ?? fields, { expectedDigest })
+        return sendJson(response, 200, app.storySources.getRuntimeStory(params.id))
       }
 
       if (method === 'GET' && pathname === '/api/user-profile') return sendJson(response, 200, app.repository.getUserProfile())
