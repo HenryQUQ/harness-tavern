@@ -58,18 +58,23 @@ try {
   assert.equal(first.app.repository.getPersona(SAMPLE_IDS.persona).name, 'Avery')
   pass('onboarding', 'A nontechnical user can set identity without touching model settings.')
 
-  const characterDraft = await request(first.baseUrl, '/api/creator/character-drafts', {
+  const characterResult = await request(first.baseUrl, '/api/library/items', {
     method: 'POST',
     body: {
-      name: 'Iona Reed',
-      brief: 'A warm but independent night-train conductor who remembers passengers and refuses to flatter them.',
-      relationship: 'a recurring companion',
-      energy: 'quietly funny and observant',
+      kind: 'character',
+      content: {
+        name: 'Iona Reed',
+        description: 'A night-train conductor who remembers every passenger.',
+        personality: 'Warm, independent, quietly funny and observant.',
+        first_message: 'The last train is waiting.',
+        goals: ['Keep every passenger safe'],
+        boundaries: ['Never decides the player’s actions'],
+      },
     },
   })
-  const characterPublish = await request(first.baseUrl, `/api/creator/drafts/${encodeURIComponent(characterDraft.id)}/publish`, { method: 'POST', body: {} })
-  const character = characterPublish.character
+  const character = characterResult.item
   assert.equal(character.name, 'Iona Reed')
+  assert.equal(character.scenario, '')
   const characterConversation = await request(first.baseUrl, '/api/conversations', {
     method: 'POST',
     body: { title: 'Night train with Iona', persona_id: SAMPLE_IDS.persona, character_ids: [character.id], thinking_intensity: 'auto' },
@@ -79,47 +84,55 @@ try {
     body: { content: 'The platform is empty. What did you notice before I arrived?' },
   })
   assert.ok(characterTurn.messages.some(message => message.character_id === character.id))
-  pass('guided-character-to-chat', 'One short brief became a persistent character and a working conversation.')
+  pass('explicit-character-to-chat', 'Explicit Character fields entered the Library unchanged and started a working conversation.')
 
-  const storyDraft = await request(first.baseUrl, '/api/creator/story-drafts', {
+  const storyResult = await request(first.baseUrl, '/api/library/items', {
     method: 'POST',
     body: {
-      title: 'The Clockwork Orchard',
-      brief: 'Three caretakers wake in an orchard where every fruit contains a memory, but one caretaker has been replacing the memories to prevent a disaster.',
-      genre: 'Mystery fantasy',
-      tone: 'Intimate, strange and hopeful',
-      cast_size: 3,
-      player_role: 'A visitor invited to judge which memories should be restored.',
+      kind: 'story',
+      content: {
+        title: 'Untold Orchard',
+        cast: [character.id, SAMPLE_IDS.mira, SAMPLE_IDS.rowan].map(characterId => ({
+          character_id: characterId,
+          role: '',
+          public_context: '',
+          private_context: '',
+          metadata: {},
+        })),
+      },
     },
   })
-  const storyPublish = await request(first.baseUrl, `/api/creator/drafts/${encodeURIComponent(storyDraft.id)}/publish`, {
+  const story = storyResult.item
+  assert.equal(story.cast.length, 3)
+  assert.equal(story.premise, '')
+  assert.equal(story.opening_scene, '')
+  assert.deepEqual(story.scenes, [])
+  const started = await request(first.baseUrl, '/api/playthroughs', {
     method: 'POST',
-    body: { start_playthrough: true, persona_id: SAMPLE_IDS.persona },
+    body: { story_id: story.id, persona_id: SAMPLE_IDS.persona },
   })
-  assert.equal(storyPublish.story.cast.length, 3)
-  const playConversation = storyPublish.playthrough.conversation
+  const playConversation = started.conversation
   const storyTurn = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(playConversation.id)}/turn`, {
     method: 'POST',
-    body: { content: 'Each of you, tell me what you think changed in the orchard last night.' },
+    body: { content: 'Each of you compare what you know, then decide together what changed in the orchard last night.' },
   })
   assert.equal(storyTurn.effective_thinking_intensity, 'high')
   const journal = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(playConversation.id)}`)
   assert.ok(journal.journal)
   assert.doesNotMatch(JSON.stringify(journal.journal), /private_context|director_context|creator_notes/i)
-  pass('guided-story-to-playthrough', 'A plain-language brief became a 3-character story, playthrough, turn and player-safe Journal.')
+  pass('explicit-story-to-playthrough', 'A title and explicit Cast became an empty standard Story source, playthrough, turn and player-safe Journal.')
 
-  const templateExtension = await request(first.baseUrl, `/api/extensions/from-story/${encodeURIComponent(storyPublish.story.id)}`, {
+  const types = await request(first.baseUrl, '/api/library/content-types')
+  assert.ok(types.every(item => item.creation_mode === 'explicit' && item.generated === false))
+  const removedGuided = await fetch(`${first.baseUrl}/api/creator/story-drafts`, {
     method: 'POST',
-    body: { title: 'My memory mystery template', description: 'Reuse the cast structure without copying the finished story.' },
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ brief: 'Invent a story for me.' }),
   })
-  const templateId = templateExtension.template.id
-  const secondDraft = await request(first.baseUrl, '/api/creator/story-drafts', {
-    method: 'POST',
-    body: { template_id: templateId, brief: 'A flooded library where three divers disagree about which sealed room should be opened.', title: 'Below the Silent Stacks' },
-  })
-  assert.equal(secondDraft.data.characters.length, 3)
-  assert.ok(secondDraft.data.world_rules.length >= storyPublish.story.world_rules.length)
-  pass('no-code-extensibility', 'A finished story became a reusable creation template without JSON or code.')
+  assert.equal(removedGuided.status, 410)
+  const removedGuidedBody = await removedGuided.json()
+  assert.equal(removedGuidedBody.error.code, 'guided_creation_removed')
+  pass('framework-boundary', 'Core advertises explicit structures and rejects the retired fixed-brief generation route.')
 
   const extensionPack = {
     format: EXTENSION_FORMAT,
@@ -128,15 +141,16 @@ try {
     slug: 'gentle-prompts',
     name: 'Gentle prompts',
     version: '1.0.0',
-    description: 'Adds one friendly story starter.',
+    description: 'Adds an optional composer action and presentation theme.',
     publisher: 'Journey test',
     capabilities: {
-      story_templates: [{ id: 'gentle-mystery', name: 'Gentle mystery', description: 'Low-conflict mystery for relationship-focused play.', defaults: { genre: 'Cozy mystery', tone: 'Gentle and curious', cast_size: 2 } }],
+      story_templates: [],
       quick_actions: [{ id: 'check-in', label: 'Check in', prompt: 'I pause and ask how everyone is feeling about the situation.' }],
+      themes: [{ id: 'gentle-night', name: 'Gentle night', tokens: { surface: '#15141a', accent: '#b9a7d8' } }],
     },
   }
   const preview = await request(first.baseUrl, '/api/extensions/preview', { method: 'POST', body: extensionPack })
-  assert.equal(preview.counts.story_templates, 1)
+  assert.equal(preview.counts.story_templates, 0)
   assert.match(preview.warnings.join(' '), /cannot execute code/i)
   const installed = await request(first.baseUrl, '/api/extensions', { method: 'POST', body: extensionPack })
   assert.equal(installed.name, 'Gentle prompts')
@@ -154,7 +168,7 @@ try {
 
   const share = await request(first.baseUrl, '/api/shares', {
     method: 'POST',
-    body: { resource_type: 'story', resource_id: storyPublish.story.id, scope: 'remix', expires_in_days: 7 },
+    body: { resource_type: 'story', resource_id: story.id, scope: 'remix', expires_in_days: 7 },
   })
   const publicShare = await request(first.baseUrl, `/api/public/shares/${encodeURIComponent(share.token)}`)
   assert.equal(publicShare.resource_type, 'story')

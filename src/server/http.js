@@ -253,7 +253,6 @@ function playerHome(app) {
     })),
     characters: home.characters.map(item => ({ ...playerCharacter(item), favorite: Boolean(item.favorite) })),
     stories: home.stories.map(item => ({ ...playerStory(item, item.playthroughs), favorite: Boolean(item.favorite) })),
-    drafts: home.drafts.map(item => ({ id: item.id, type: item.type, title: item.title, status: item.status, updated_at: item.updated_at })),
   }
 }
 
@@ -262,7 +261,8 @@ function publicBootstrap(app) {
     version: PRODUCT_VERSION,
     product: PRODUCT_NAME,
     capabilities: [
-      'guided-creator',
+      'framework-first-content',
+      'explicit-content-lifecycle',
       'playthroughs',
       'player-journal',
       'portable-sharing',
@@ -292,6 +292,7 @@ function publicBootstrap(app) {
     account_connections: app.accounts.list(),
     extensions: app.extensions.list().map(item => ({ id: item.id, slug: item.slug, name: item.name, version: item.version, description: item.manifest.description, enabled: item.enabled, source: item.source })),
     contributions: app.extensions.contributions(),
+    content_types: app.library.contentTypes(),
     characters: app.repository.listCharacters().map(playerCharacter),
     personas: app.repository.listPersonas(),
     stories: app.repository.listStories().map(story => playerStory(story, app.repository.listPlaythroughs(story.id))),
@@ -378,12 +379,13 @@ export function createHttpServer(app) {
       }
       if (method === 'GET' && pathname === '/api/bootstrap') return sendJson(response, 200, publicBootstrap(app))
       if (method === 'GET' && pathname === '/api/home') return sendJson(response, 200, playerHome(app))
+      if (method === 'GET' && pathname === '/api/library/content-types') return sendJson(response, 200, app.library.contentTypes())
+      if (method === 'POST' && pathname === '/api/library/items') return sendJson(response, 201, app.library.add(await bodyJson(request, app.config.requestBodyLimit)))
       if (method === 'GET' && pathname === '/api/creator/bootstrap') {
         return sendJson(response, 200, {
           characters: app.repository.listCharacters(),
           stories: app.repository.listStories(),
           personas: app.repository.listPersonas(),
-          drafts: app.repository.listDrafts(),
           extensions: app.extensions.list(),
           contributions: app.extensions.contributions(),
           imports: app.repository.listImports(),
@@ -475,16 +477,23 @@ export function createHttpServer(app) {
         return response.end()
       }
 
-      if (method === 'POST' && pathname === '/api/creator/character-drafts') return sendJson(response, 201, app.creator.generateCharacterDraft(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && pathname === '/api/creator/story-drafts') return sendJson(response, 201, app.creator.generateStoryDraft(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'GET' && pathname === '/api/creator/drafts') return sendJson(response, 200, app.repository.listDrafts(url.searchParams.get('type')))
-      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) return sendJson(response, 200, app.repository.getDraft(params.id))
-      if (method === 'PATCH' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) return sendJson(response, 200, app.creator.updateDraft(params.id, await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'DELETE' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) {
-        app.repository.deleteDraft(params.id)
-        return sendJson(response, 200, { deleted: true })
+      if (method === 'GET' && pathname === '/api/legacy/drafts') return sendJson(response, 200, app.repository.listLegacyDrafts(url.searchParams.get('type')))
+      if (method === 'GET' && (params = matchPath(pathname, '/api/legacy/drafts/:id'))) return sendJson(response, 200, app.repository.getLegacyDraft(params.id))
+      if ((method === 'POST' && ['/api/creator/character-drafts', '/api/creator/story-drafts'].includes(pathname))
+        || pathname === '/api/creator/drafts'
+        || matchPath(pathname, '/api/creator/drafts/:id')
+        || matchPath(pathname, '/api/creator/drafts/:id/publish')) {
+        const error = new Error('Guided content generation was removed from the core. Add explicit content through /api/library/items, import a standard file, or install an optional extension that owns its own generation behavior.')
+        error.status = 410
+        error.code = 'guided_creation_removed'
+        throw error
       }
-      if (method === 'POST' && (params = matchPath(pathname, '/api/creator/drafts/:id/publish'))) return sendJson(response, 201, app.creator.publishDraft(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'POST' && matchPath(pathname, '/api/extensions/from-story/:storyId')) {
+        const error = new Error('Core Story-to-template authoring was removed. Export the standard Story source or implement optional blueprint behavior in an extension.')
+        error.status = 410
+        error.code = 'core_template_authoring_removed'
+        throw error
+      }
 
       if (method === 'GET' && (params = matchPath(pathname, '/api/exports/characters/:id'))) {
         const format = url.searchParams.get('format')
@@ -562,9 +571,6 @@ export function createHttpServer(app) {
 
       if (method === 'GET' && pathname === '/api/extensions') return sendJson(response, 200, { extensions: app.extensions.list(), contributions: app.extensions.contributions() })
       if (method === 'POST' && pathname === '/api/extensions/preview') return sendJson(response, 200, app.extensions.preview(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && (params = matchPath(pathname, '/api/extensions/from-story/:storyId'))) {
-        return sendJson(response, 201, app.extensions.createStoryTemplate(app.repository.getStory(params.storyId), await bodyJson(request, app.config.requestBodyLimit)))
-      }
       if (method === 'POST' && pathname === '/api/extensions') return sendJson(response, 201, app.extensions.install(await bodyJson(request, app.config.requestBodyLimit), { source: 'manual' }))
       if (method === 'PATCH' && (params = matchPath(pathname, '/api/extensions/:id'))) return sendJson(response, 200, app.extensions.setEnabled(params.id, Boolean((await bodyJson(request, app.config.requestBodyLimit)).enabled)))
       if (method === 'DELETE' && (params = matchPath(pathname, '/api/extensions/:id'))) {

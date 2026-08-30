@@ -11,7 +11,6 @@ const state = {
   streaming: false,
   modal: null,
   modalCloseGuard: null,
-  selectedTemplate: null,
   importContent: null,
   migrationId: null,
   inspectorTab: 'facts',
@@ -59,7 +58,7 @@ async function refresh({ preserveView = true } = {}) {
 }
 
 function showView(view, { updateHash = true } = {}) {
-  if (!['home', 'chats', 'library', 'create', 'settings', 'chat'].includes(view)) view = 'home'
+  if (!['home', 'chats', 'library', 'settings', 'chat'].includes(view)) view = 'home'
   state.view = view
   $$('.view').forEach(node => node.classList.toggle('active', node.id === `view-${view}`))
   $$('#primaryNav button, #settingsNav').forEach(button => button.classList.toggle('active', button.dataset.view === view))
@@ -68,7 +67,6 @@ function showView(view, { updateHash = true } = {}) {
   if (view === 'home') renderHome()
   if (view === 'chats') renderChats()
   if (view === 'library') renderLibrary()
-  if (view === 'create') renderCreate()
   if (view === 'settings') renderSettings()
 }
 
@@ -193,22 +191,6 @@ function renderLibrary() {
   if (!grid.children.length) grid.append(emptyState('No matching content.'))
 }
 
-function renderCreate() {
-  const grid = clear($('#draftGrid'))
-  const drafts = state.boot.home.drafts
-  if (!drafts.length) {
-    grid.append(emptyState('Your editable character and story drafts will appear here.'))
-    return
-  }
-  grid.append(...drafts.map(draft => el('article', { class: 'draft-card' },
-    el('div', {}, el('small', { text: draft.type === 'story' ? t('stories') : t('characters') }), el('h3', { text: draft.title }), el('small', { text: relativeTime(draft.updated_at, getLocale()) })),
-    el('div', { class: 'draft-card-actions' },
-      el('button', { class: 'secondary compact', text: t('editDraft'), on: { click: () => openDraftEditor(draft.id) } }),
-      el('button', { class: 'compact', text: t('publish'), on: { click: () => publishDraft(draft.id, false) } }),
-    ),
-  )))
-}
-
 function renderSettings() {
   const profile = state.boot.user_profile
   const form = $('#profileForm')
@@ -232,7 +214,7 @@ function renderSettings() {
 
   const extensionList = clear($('#extensionList'))
   extensionList.append(...state.boot.extensions.map(extension => el('div', { class: 'settings-row' },
-    el('div', {}, el('strong', { text: extension.name }), el('small', { text: `${extension.description || 'Adds reusable creative choices.'} · v${extension.version}` })),
+    el('div', {}, el('strong', { text: extension.name }), el('small', { text: `${extension.description || 'Adds optional declarative contributions.'} · v${extension.version}` })),
     el('div', { class: 'settings-row-actions' },
       extension.source !== 'builtin' ? el('button', { class: 'secondary compact', text: t('downloadAddon'), on: { click: async () => downloadJson(await api(`/api/extensions/${encodeURIComponent(extension.id)}/export`), `${extension.slug}.tavern-extension.json`) } }) : null,
       extension.source !== 'builtin' ? el('button', { class: 'secondary compact', text: extension.enabled ? 'Disable' : 'Enable', on: { click: () => toggleExtension(extension.id, !extension.enabled) } }) : null,
@@ -245,7 +227,6 @@ function renderAll() {
   renderHome()
   renderChats()
   renderLibrary()
-  renderCreate()
   renderSettings()
 }
 
@@ -481,7 +462,6 @@ async function openStoryDetail(storyId) {
       el('button', { class: 'secondary', text: uiText('编辑故事', 'Edit story'), on: { click: () => openStoryEditor(story.id) } }),
       el('button', { class: 'secondary', text: fav ? t('unfavorite') : t('favorite'), on: { click: () => toggleFavorite('story', story.id, !fav, () => openStoryDetail(story.id)) } }),
       el('button', { class: 'secondary', text: t('share'), on: { click: () => openShare('story', story.id, story.title) } }),
-      el('button', { class: 'secondary', text: t('saveAsTemplate'), on: { click: () => saveStoryAsTemplate(story) } }),
     ),
   )
   openModal(story.title, content, { wide: true })
@@ -766,25 +746,6 @@ async function openStorySourceEditor(story) {
     await openStoryDetail(saved.story.id)
   })
   openModal(`Edit source: ${story.title}`, form, { wide: true, autoFocus: false })
-}
-
-function saveStoryAsTemplate(story) {
-  const form = el('form', { class: 'friendly-form' },
-    el('p', { text: 'Save the cast balance, world rules, scene structure, and tone as a reusable starting point. You can change every detail in the next story.' }),
-    el('label', {}, el('span', { text: 'Template name' }), el('input', { name: 'name', value: `${story.title} pattern`, required: true, maxlength: 120 })),
-    el('label', {}, el('span', { text: 'When should this template be used?' }), el('textarea', { name: 'description', rows: 3, value: `Use this when you want a new ${story.genre || 'story'} with a similar cast dynamic and scene structure.` })),
-    el('button', { type: 'submit', text: t('saveAsTemplate') }),
-  )
-  form.addEventListener('submit', async event => {
-    event.preventDefault()
-    const values = formObject(form)
-    await api(`/api/extensions/from-story/${encodeURIComponent(story.id)}`, { method: 'POST', body: JSON.stringify(values) })
-    closeModal()
-    await refresh()
-    toast(t('templateSaved'))
-    showView('create')
-  })
-  openModal(t('saveAsTemplate'), form)
 }
 
 function startStory(story) {
@@ -1468,321 +1429,113 @@ async function switchTimeline(branchId) {
   await openConversation(state.conversationId)
 }
 
-function openWizard({ title, labels, renderStep, onNext = null, onFinish = null, finishLabel = 'Done', startAt = 0 }) {
-  let index = Math.max(0, Math.min(labels.length - 1, startAt))
-  let busy = false
-  const root = el('div', { class: 'wizard-shell' })
-  const draw = () => {
-    const stepper = el('ol', { class: 'wizard-stepper', 'aria-label': 'Creation progress' }, ...labels.map((label, stepIndex) =>
-      el('li', { class: `${stepIndex === index ? 'current' : ''} ${stepIndex < index ? 'complete' : ''}` }, el('span', { text: stepIndex < index ? '✓' : String(stepIndex + 1) }), el('small', { text: label })),
-    ))
-    const content = el('div', { class: 'wizard-content' }, renderStep(index, draw))
-    const back = el('button', { type: 'button', class: 'secondary', text: index ? 'Back' : t('close'), on: { click: () => { if (index) { index -= 1; draw() } else closeModal() } } })
-    const next = el('button', { type: 'button', text: index === labels.length - 1 ? finishLabel : 'Continue', on: { click: async () => {
-      if (busy) return
-      const invalid = root.querySelector(':invalid')
-      if (invalid) { invalid.reportValidity(); return }
-      busy = true
-      next.disabled = true
-      try {
-        await onNext?.(index)
-        if (index === labels.length - 1) await onFinish?.()
-        else { index += 1; draw() }
-      } catch (error) { toast(error.message, 7000) }
-      finally { busy = false; next.disabled = false }
-    } } })
-    clear(root).append(stepper, content, el('div', { class: 'wizard-footer' }, back, next))
+function openNewContent() {
+  const definitions = state.boot.content_types || []
+  const labels = {
+    character: {
+      icon: '✦',
+      title: uiText('空白角色', 'Blank Character'),
+      description: uiText('只建立结构和名称，然后进入完整角色编辑器。', 'Create only its identity and structure, then open the complete Character editor.'),
+      open: openBlankCharacter,
+    },
+    story: {
+      icon: '◇',
+      title: uiText('空白故事', 'Blank Story'),
+      description: uiText('选择初始角色阵容并建立标准 Story v2 文件；不生成题材、情节或文字。', 'Choose the initial Cast and create a standard Story v2 file. No genre, plot, or prose is generated.'),
+      open: openBlankStory,
+    },
   }
-  draw()
-  openModal(title, root, { wide: true })
-  return { draw, get step() { return index } }
-}
-
-function choiceButtons(items, selected, onSelect, { columns = 'auto' } = {}) {
-  return el('div', { class: `wizard-options ${columns === 'compact' ? 'compact' : ''}` }, ...items.map(item =>
-    el('button', { type: 'button', class: `wizard-option ${selected === item.value ? 'selected' : ''}`, on: { click: () => onSelect(item.value) } },
-      el('strong', { text: item.label }), item.description ? el('small', { text: item.description }) : null,
-    ),
-  ))
-}
-
-function quickCreate(kind) {
-  const templates = state.boot.contributions[`${kind}_templates`] || []
-  const input = {
-    template_id: templates[0]?.id || null,
-    brief: '',
-    name: '',
-    relationship: 'companion',
-    energy: 'grounded and warm',
-    genre: templates[0]?.defaults?.genre || 'Mystery',
-    tone: templates[0]?.defaults?.tone || 'Immersive and character-led',
-    cast_size: templates[0]?.defaults?.cast_size || 3,
-    player_role: '',
-  }
-  const labels = kind === 'story' ? ['Your idea', 'Shape the experience', 'Review'] : ['Your idea', 'Relationship', 'Review']
-  let wizard
-  const renderStep = (step, redraw) => {
-    if (step === 0) {
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: kind === 'story' ? 'What should the player experience?' : 'Who would be interesting to meet?' }), el('p', { text: 'Write naturally. You do not need prompt syntax, JSON, or model instructions.' })),
-        templates.length ? el('section', {}, el('label', { class: 'field-heading', text: 'Optional starting point' }), choiceButtons(templates.map(template => ({ value: template.id, label: template.name, description: template.description })), input.template_id, value => { input.template_id = value; const template = templates.find(item => item.id === value); if (kind === 'story') { input.genre = template?.defaults?.genre || input.genre; input.tone = template?.defaults?.tone || input.tone; input.cast_size = template?.defaults?.cast_size || input.cast_size } redraw() })) : null,
-        el('label', {}, el('span', { text: t('yourIdea') }), el('textarea', { rows: 8, required: true, value: input.brief, placeholder: kind === 'story' ? 'Three people are trapped in a midnight train. Each knows a different reason why it cannot stop, and the player must decide whom to trust…' : 'A retired astronomer who is kind but guarded. They need help finishing one last map and gradually become a trusted friend…', on: { input: event => { input.brief = event.target.value } } })),
-      )
-    }
-    if (step === 1 && kind === 'character') {
-      const relationships = [
-        { value: 'companion', label: 'Companion', description: 'A relationship that can deepen over many conversations.' },
-        { value: 'rival', label: 'Rival', description: 'Challenge, friction and mutual respect.' },
-        { value: 'mentor', label: 'Mentor or guide', description: 'Knowledgeable, but still a person with their own goals.' },
-        { value: 'stranger', label: 'Intriguing stranger', description: 'A mystery that unfolds through conversation.' },
-      ]
-      const energies = [
-        { value: 'grounded and warm', label: 'Warm', description: 'Attentive and emotionally grounded.' },
-        { value: 'witty and lively', label: 'Lively', description: 'Playful, fast and expressive.' },
-        { value: 'quiet and thoughtful', label: 'Thoughtful', description: 'Measured, reflective and subtle.' },
-        { value: 'intense and challenging', label: 'Intense', description: 'Direct, driven and willing to disagree.' },
-      ]
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: 'What kind of relationship should be possible?' }), el('p', { text: 'This guides the starting dynamic, not a fixed ending.' })),
-        choiceButtons(relationships, input.relationship, value => { input.relationship = value; redraw() }),
-        el('h3', { text: 'How should they feel to talk to?' }), choiceButtons(energies, input.energy, value => { input.energy = value; redraw() }),
-        el('label', {}, el('span', { text: 'Name (optional)' }), el('input', { value: input.name, placeholder: 'Leave blank for a suggested name', on: { input: event => { input.name = event.target.value } } })),
-      )
-    }
-    if (step === 1) {
-      const genres = ['Mystery', 'Fantasy', 'Romance', 'Adventure', 'Science fiction', 'Slice of life']
-      const tones = [
-        { value: 'Immersive and character-led', label: 'Immersive', description: 'Atmospheric scenes with room to explore.' },
-        { value: 'Warm and relationship-focused', label: 'Warm', description: 'Relationships and everyday moments lead.' },
-        { value: 'Tense and consequential', label: 'Tense', description: 'Choices have visible pressure and cost.' },
-        { value: 'Playful and surprising', label: 'Playful', description: 'Lighter pacing with character-driven surprises.' },
-      ]
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: 'Shape the first playable version' }), el('p', { text: 'These are starting defaults. You can change every part before publishing.' })),
-        el('label', {}, el('span', { text: 'Genre' }), el('select', { value: input.genre, on: { change: event => { input.genre = event.target.value } } }, ...genres.map(value => el('option', { value, text: value, selected: input.genre === value })))),
-        el('h3', { text: 'Tone' }), choiceButtons(tones, input.tone, value => { input.tone = value; redraw() }),
-        el('label', {}, el('span', { text: 'How many main characters?' }), el('div', { class: 'number-choices' }, ...[1,2,3,4,5].map(number => el('button', { type: 'button', class: input.cast_size === number ? 'selected' : '', text: String(number), on: { click: () => { input.cast_size = number; redraw() } } })))),
-        el('label', {}, el('span', { text: 'Who is the player? (optional)' }), el('textarea', { rows: 3, value: input.player_role, placeholder: 'A newcomer, investigator, old friend, traveller… Leave blank to keep it open.', on: { input: event => { input.player_role = event.target.value } } })),
-      )
-    }
-    const selectedTemplate = templates.find(item => item.id === input.template_id)
-    return el('div', { class: 'wizard-review' },
-      el('p', { class: 'eyebrow', text: 'Ready to create an editable draft' }),
-      el('h3', { text: derivePreviewTitle(input.brief, kind === 'story' ? 'New story' : 'New character') }),
-      el('p', { text: input.brief }),
-      el('div', { class: 'review-facts' },
-        selectedTemplate ? el('span', {}, el('small', { text: 'Starting point' }), el('strong', { text: selectedTemplate.name })) : null,
-        kind === 'story' ? el('span', {}, el('small', { text: 'Experience' }), el('strong', { text: `${input.genre} · ${input.cast_size} character${input.cast_size === 1 ? '' : 's'}` })) : el('span', {}, el('small', { text: 'Dynamic' }), el('strong', { text: `${input.relationship} · ${input.energy}` })),
-      ),
-      el('p', { class: 'microcopy', text: 'The result remains a private draft. Nothing is published until you choose Publish.' }),
+  const options = definitions.map(definition => {
+    const copy = labels[definition.kind]
+    if (!copy) return null
+    return el('button', { type: 'button', class: 'new-content-option', on: { click: copy.open } },
+      el('span', { class: 'new-content-icon', text: copy.icon, 'aria-hidden': 'true' }),
+      el('span', { class: 'new-content-copy' }, el('strong', { text: copy.title }), el('small', { text: copy.description })),
+      el('span', { class: 'new-content-arrow', text: '→', 'aria-hidden': 'true' }),
     )
-  }
-  wizard = openWizard({
-    title: kind === 'story' ? t('describeStory') : t('describeCharacter'),
-    labels,
-    renderStep,
-    finishLabel: t('generateDraft'),
-    onFinish: async () => {
-      const draft = await api(`/api/creator/${kind}-drafts`, { method: 'POST', body: JSON.stringify(input) })
+  }).filter(Boolean)
+  options.push(el('button', { type: 'button', class: 'new-content-option', on: { click: () => { closeModal(); openImportDialog() } } },
+    el('span', { class: 'new-content-icon', text: '↥', 'aria-hidden': 'true' }),
+    el('span', { class: 'new-content-copy' }, el('strong', { text: uiText('导入标准文件', 'Import standard content') }), el('small', { text: uiText('预览 Character Card、Story Source、Tavern Pack 或 SillyTavern 数据后再写入。', 'Preview a Character Card, Story source, Tavern pack, or SillyTavern data before writing it.') })),
+    el('span', { class: 'new-content-arrow', text: '→', 'aria-hidden': 'true' }),
+  ))
+  openModal(uiText('加入内容库', 'Add to Library'), el('div', { class: 'new-content-shell' },
+    el('p', { class: 'new-content-principle', text: uiText('Harness Tavern 只建立你明确选择的结构，不会用固定 Prompt 替你补写内容。', 'Harness Tavern creates only the structure you explicitly choose. It does not expand a brief with a fixed prompt.') }),
+    el('div', { class: 'new-content-list' }, ...options),
+  ), { autoFocus: false })
+}
+
+function openBlankCharacter() {
+  const form = el('form', { class: 'friendly-form blank-content-form' },
+    el('p', { text: uiText('这里只需要一个名称。其余字段保持为空，并在创建后由完整角色编辑器管理。', 'Only a name is required here. Every other field stays empty and is managed by the complete editor after creation.') }),
+    el('label', {}, el('span', { text: uiText('角色名称', 'Character name') }), el('input', { name: 'name', required: true, maxlength: 120, autocomplete: 'off' })),
+    el('button', { type: 'submit', text: uiText('建立空白角色', 'Create blank Character') }),
+  )
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    const button = form.querySelector('button[type="submit"]')
+    button.disabled = true
+    try {
+      const values = formObject(form)
+      const result = await api('/api/library/items', { method: 'POST', body: JSON.stringify({ kind: 'character', content: { name: values.name } }) })
       closeModal()
       await refresh()
-      await openDraftEditor(draft.id)
-    },
+      state.libraryTab = 'characters'
+      showView('library')
+      await openCharacterEditor(result.item.id)
+    } catch (error) { button.disabled = false; toast(error.message, 7000) }
   })
-  void wizard
+  openModal(uiText('空白角色', 'Blank Character'), form)
 }
 
-function derivePreviewTitle(brief, fallback) {
-  const first = String(brief || '').trim().split(/[.!?。！？\n]/)[0].trim()
-  return first ? first.split(/\s+/).slice(0, 9).join(' ') : fallback
-}
-
-async function openDraftEditor(draftId) {
-  const draft = await api(`/api/creator/drafts/${encodeURIComponent(draftId)}`)
-  if (draft.type === 'character') return openCharacterDraftEditor(draft)
-  return openStoryDraftEditor(draft)
-}
-
-function openCharacterDraftEditor(draft) {
-  const data = structuredClone(draft.data)
-  const save = () => api(`/api/creator/drafts/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body: JSON.stringify({ data, title: data.name }) })
-  const renderStep = (step) => {
-    if (step === 0) return el('div', {},
-      el('div', { class: 'wizard-intro' }, el('h3', { text: 'Introduce the character' }), el('p', { text: 'Write for a reader, not for a model. One clear paragraph is enough.' })),
-      el('div', { class: 'form-row' },
-        el('label', {}, el('span', { text: 'Name' }), el('input', { required: true, value: data.name, on: { input: event => { data.name = event.target.value } } })),
-        el('label', {}, el('span', { text: 'Short tags' }), el('input', { value: (data.tags || []).join(', '), placeholder: 'companion, fantasy, gentle', on: { input: event => { data.tags = event.target.value.split(',').map(item => item.trim()).filter(Boolean) } } })),
-      ),
-      el('label', {}, el('span', { text: 'Who are they?' }), el('textarea', { required: true, rows: 5, value: data.description, on: { input: event => { data.description = event.target.value } } })),
-      el('details', { class: 'friendly-details' }, el('summary', { text: 'Optional appearance and meeting situation' }),
-        el('label', {}, el('span', { text: 'Appearance' }), el('textarea', { rows: 3, value: data.appearance, on: { input: event => { data.appearance = event.target.value } } })),
-        el('label', {}, el('span', { text: 'How the first meeting begins' }), el('textarea', { rows: 4, value: data.scenario, on: { input: event => { data.scenario = event.target.value } } })),
-      ),
-    )
-    if (step === 1) return el('div', {},
-      el('div', { class: 'wizard-intro' }, el('h3', { text: 'Give them a recognisable voice' }), el('p', { text: 'Focus on how they behave and speak, not lists of adjectives.' })),
-      el('label', {}, el('span', { text: 'Personality and behaviour' }), el('textarea', { required: true, rows: 5, value: data.personality, on: { input: event => { data.personality = event.target.value } } })),
-      el('label', {}, el('span', { text: 'Speaking style' }), el('textarea', { rows: 4, value: data.speech_style, on: { input: event => { data.speech_style = event.target.value } } })),
-      el('label', {}, el('span', { text: 'Their first message to the user' }), el('textarea', { required: true, rows: 6, value: data.first_message, on: { input: event => { data.first_message = event.target.value } } })),
-    )
-    if (step === 2) return el('div', {},
-      el('div', { class: 'wizard-intro' }, el('h3', { text: 'Add depth that can unfold over time' }), el('p', { text: 'These are private authoring notes. Players will not see them unless the character reveals them naturally.' })),
-      el('label', {}, el('span', { text: 'What do they want?' }), el('textarea', { rows: 5, value: (data.goals || []).join('\n'), placeholder: 'One goal per line', on: { input: event => { data.goals = lines(event.target.value) } } })),
-      el('label', {}, el('span', { text: 'What are they not ready to reveal?' }), el('textarea', { rows: 5, value: (data.secrets || []).join('\n'), placeholder: 'One private fact per line', on: { input: event => { data.secrets = lines(event.target.value) } } })),
-      el('label', {}, el('span', { text: 'What must the character never do?' }), el('textarea', { rows: 5, value: (data.boundaries || []).join('\n'), placeholder: 'One boundary per line', on: { input: event => { data.boundaries = lines(event.target.value) } } })),
-    )
-    return el('div', { class: 'wizard-review' },
-      el('div', { class: 'profile-hero' }, avatar(data, 'xxl'), el('div', {}, el('p', { class: 'eyebrow', text: 'Character preview' }), el('h2', { text: data.name }), el('p', { text: data.description }))),
-      el('div', { class: 'detail-grid' },
-        el('div', { class: 'detail-box' }, el('h3', { text: 'Voice' }), el('p', { text: data.speech_style || data.personality })),
-        el('div', { class: 'detail-box' }, el('h3', { text: 'First message' }), el('p', { text: data.first_message })),
-      ),
-      el('div', { class: 'profile-actions' },
-        el('button', { type: 'button', class: 'secondary', text: 'Save private draft', on: { click: async () => { await save(); closeModal(); await refresh(); toast(t('saved')) } } }),
-        el('button', { type: 'button', text: t('publish'), on: { click: async () => { await save(); await publishDraft(draft.id, false) } } }),
-      ),
-      el('p', { class: 'microcopy', text: 'Publishing adds the character to your private Library. You can share it separately afterwards.' }),
-    )
+function openBlankStory() {
+  const characters = state.boot.characters
+  if (!characters.length) {
+    return openModal(uiText('空白故事', 'Blank Story'), el('div', { class: 'friendly-form' },
+      el('p', { text: uiText('Story Source 至少需要一个明确的角色引用。请先建立或导入角色。', 'A Story source needs at least one explicit Character reference. Add or import a Character first.') }),
+      el('button', { type: 'button', text: uiText('先建立角色', 'Create a Character first'), on: { click: openBlankCharacter } }),
+    ))
   }
-  openWizard({ title: `${t('editDraft')}: ${draft.title}`, labels: ['Identity', 'Voice', 'Depth', 'Preview'], renderStep, onNext: step => step < 3 ? save() : null, finishLabel: 'Close', onFinish: closeModal })
-}
-
-function openStoryDraftEditor(draft) {
-  const data = structuredClone(draft.data)
-  data.characters ||= []
-  data.cast ||= []
-  data.world_rules ||= []
-  data.lore ||= []
-  data.scenes ||= []
-  const existingCharacters = state.boot.characters
-  const save = () => api(`/api/creator/drafts/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body: JSON.stringify({ data, title: data.title }) })
-  const memberFor = character => {
-    let member = data.cast.find(item => item.character_id === character.temporary_id || item.character_id === character.character_id)
-    if (!member) {
-      member = { character_id: character.temporary_id || character.character_id, role: '', public_context: '', private_context: '', metadata: {} }
-      data.cast.push(member)
-    }
-    return member
-  }
-  const addCharacter = () => {
-    const temporaryId = `draft-character-${crypto.randomUUID()}`
-    data.characters.push({ temporary_id: temporaryId, name: `Character ${data.characters.length + 1}`, description: '', personality: '', appearance: '', scenario: data.premise, first_message: '', speech_style: '', goals: [], secrets: [], boundaries: ['Never decides the player’s thoughts, dialogue or actions.'], tags: ['story-cast'], metadata: {} })
-    data.cast.push({ character_id: temporaryId, role: '', public_context: '', private_context: '', metadata: {} })
-  }
-  const removeCharacter = character => {
-    if (data.characters.length <= 1) return toast('A playable story needs at least one character.')
-    data.characters = data.characters.filter(item => item !== character)
-    data.cast = data.cast.filter(item => item.character_id !== character.temporary_id && item.character_id !== character.character_id)
-  }
-  const validateCast = () => {
-    const selected = data.characters.map(item => item.character_id).filter(Boolean)
-    if (new Set(selected).size !== selected.length) throw new Error('The same existing character cannot fill two cast roles. Choose a different character or create a new one.')
-  }
-  const renderStep = (step, redraw) => {
-    if (step === 0) return el('div', {},
-      el('div', { class: 'wizard-intro' }, el('h3', { text: 'What is this story experience?' }), el('p', { text: 'A strong hook and a clear player role are enough. The rest can grow during playtesting.' })),
-      el('div', { class: 'form-row' },
-        el('label', {}, el('span', { text: 'Title' }), el('input', { required: true, value: data.title, on: { input: event => { data.title = event.target.value } } })),
-        el('label', {}, el('span', { text: 'Genre' }), el('input', { value: data.genre, on: { input: event => { data.genre = event.target.value } } })),
-      ),
-      el('label', {}, el('span', { text: 'One-line invitation' }), el('textarea', { required: true, rows: 2, value: data.hook, placeholder: 'What makes someone want to enter?', on: { input: event => { data.hook = event.target.value; data.summary = event.target.value } } })),
-      el('label', {}, el('span', { text: 'Premise' }), el('textarea', { required: true, rows: 6, value: data.premise, on: { input: event => { data.premise = event.target.value } } })),
-      el('div', { class: 'form-row' },
-        el('label', {}, el('span', { text: 'Tone' }), el('input', { value: data.tone, on: { input: event => { data.tone = event.target.value } } })),
-        el('label', {}, el('span', { text: t('playerRole') }), el('input', { value: data.player_role, on: { input: event => { data.player_role = event.target.value } } })),
-      ),
-      el('details', { class: 'friendly-details' }, el('summary', { text: 'Optional content notes' }), el('textarea', { rows: 3, value: (data.content_warnings || []).join('\n'), placeholder: 'One theme per line, such as grief or peril', on: { input: event => { data.content_warnings = lines(event.target.value) } } })),
-    )
-    if (step === 1) {
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: 'Build the cast' }), el('p', { text: 'Each role can use an existing character or create a new one. “What only they know” stays private from the other characters and player.' })),
-        el('div', { class: 'cast-editor-list' }, ...data.characters.map((character, index) => {
-          const member = memberFor(character)
-          const selectedId = character.character_id || ''
-          const select = el('select', { on: { change: event => {
-            const selected = existingCharacters.find(item => item.id === event.target.value)
-            character.character_id = selected?.id || undefined
-            if (selected) {
-              Object.assign(character, { name: selected.name, description: selected.description, personality: selected.personality, appearance: selected.appearance, scenario: selected.scenario, first_message: selected.first_message, speech_style: selected.speech_style, goals: [], secrets: [], boundaries: [] })
-            }
-            member.character_id = character.temporary_id || character.character_id
-            redraw()
-          } } }, el('option', { value: '', text: 'Create a new character for this story' }), ...existingCharacters.map(item => el('option', { value: item.id, text: item.name, selected: selectedId === item.id })))
-          return el('article', { class: 'cast-editor-card' },
-            el('div', { class: 'cast-editor-heading' }, el('span', { class: 'step-number', text: String(index + 1) }), el('div', {}, el('strong', { text: character.name || `Character ${index + 1}` }), el('small', { text: member.role || 'Story role not named yet' })), el('button', { type: 'button', class: 'danger compact', text: 'Remove', on: { click: () => { removeCharacter(character); redraw() } } })),
-            el('label', {}, el('span', { text: 'Use a character' }), select),
-            character.character_id ? el('div', { class: 'selected-character-summary' }, avatar(character, 'md'), el('p', { text: character.description })) : el('div', { class: 'form-row' },
-              el('label', {}, el('span', { text: 'Character name' }), el('input', { required: true, value: character.name, on: { input: event => { character.name = event.target.value } } })),
-              el('label', {}, el('span', { text: 'Personality in a sentence' }), el('input', { value: character.personality, on: { input: event => { character.personality = event.target.value } } })),
-            ),
-            el('label', {}, el('span', { text: 'Their role in this story' }), el('input', { required: true, value: member.role || '', placeholder: 'Archivist, rival, old friend, witness…', on: { input: event => { member.role = event.target.value } } })),
-            el('label', {}, el('span', { text: 'What everyone can know about them' }), el('textarea', { rows: 3, value: member.public_context || '', on: { input: event => { member.public_context = event.target.value } } })),
-            el('label', {}, el('span', { text: 'What only this character knows' }), el('textarea', { rows: 3, value: member.private_context || '', on: { input: event => { member.private_context = event.target.value } } })),
-          )
-        })),
-        el('button', { type: 'button', class: 'secondary', text: '+ Add another character', on: { click: () => { addCharacter(); redraw() } } }),
-      )
-    }
-    if (step === 2) {
-      const publicLore = data.lore.find(item => item.visibility === 'public') || { id: 'public-lore', title: 'What everyone knows', content: '', visibility: 'public', keywords: [] }
-      const directorLore = data.lore.find(item => item.visibility === 'director') || { id: 'director-lore', title: 'What stays behind the curtain', content: '', visibility: 'director', keywords: [] }
-      if (!data.lore.includes(publicLore)) data.lore.push(publicLore)
-      if (!data.lore.includes(directorLore)) data.lore.push(directorLore)
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: 'Set the world’s promises' }), el('p', { text: 'Rules keep the story consistent. Public lore can be learned immediately; behind-the-curtain notes guide the story without being shown to players.' })),
-        el('label', {}, el('span', { text: 'Opening situation' }), el('textarea', { required: true, rows: 6, value: data.opening_scene, on: { input: event => { data.opening_scene = event.target.value } } })),
-        el('label', {}, el('span', { text: 'What everyone knows at the beginning' }), el('textarea', { rows: 4, value: publicLore.content, on: { input: event => { publicLore.content = event.target.value } } })),
-        el('label', {}, el('span', { text: 'What stays behind the curtain' }), el('textarea', { rows: 4, value: directorLore.content, on: { input: event => { directorLore.content = event.target.value } } })),
-        el('details', { class: 'friendly-details' }, el('summary', { text: 'Consistency rules (advanced)' }),
-          el('p', { class: 'microcopy', text: 'Write one plain-language promise per line, such as “A locked door needs a key or another credible method.”' }),
-          el('textarea', { rows: 7, value: (data.world_rules || []).join('\n'), on: { input: event => { data.world_rules = lines(event.target.value) } } }),
-        ),
-      )
-    }
-    if (step === 3) {
-      const addScene = () => { data.scenes.push({ id: `scene-${crypto.randomUUID()}`, title: 'New scene', location: '', time: '', objective: '', active_character_ids: data.characters.map(item => item.temporary_id || item.character_id).filter(Boolean) }); redraw() }
-      return el('div', {},
-        el('div', { class: 'wizard-intro' }, el('h3', { text: 'Sketch a few possible scenes' }), el('p', { text: 'Scenes are places to arrive, not a rigid script. The player can still change what happens.' })),
-        el('div', { class: 'scene-editor-list' }, ...data.scenes.map((scene, index) => el('article', { class: 'scene-editor-card' },
-          el('div', { class: 'cast-editor-heading' }, el('span', { class: 'step-number', text: String(index + 1) }), el('strong', { text: scene.title || `Scene ${index + 1}` }), data.scenes.length > 1 ? el('button', { type: 'button', class: 'danger compact', text: 'Remove', on: { click: () => { data.scenes.splice(index, 1); redraw() } } }) : null),
-          el('div', { class: 'form-row' },
-            el('label', {}, el('span', { text: 'Scene name' }), el('input', { required: true, value: scene.title, on: { input: event => { scene.title = event.target.value } } })),
-            el('label', {}, el('span', { text: 'Location' }), el('input', { value: scene.location, on: { input: event => { scene.location = event.target.value } } })),
-          ),
-          el('label', {}, el('span', { text: 'What pressure or question makes this scene useful?' }), el('textarea', { rows: 3, value: scene.objective || '', on: { input: event => { scene.objective = event.target.value } } })),
-        ))),
-        el('button', { type: 'button', class: 'secondary', text: '+ Add a possible scene', on: { click: addScene } }),
-      )
-    }
-    return el('div', { class: 'wizard-review' },
-      el('p', { class: 'eyebrow', text: 'Playable story preview' }),
-      el('h2', { text: data.title }), el('p', { class: 'lead', text: data.hook || data.summary }),
-      el('div', { class: 'review-facts' },
-        el('span', {}, el('small', { text: 'Genre' }), el('strong', { text: data.genre || 'Open genre' })),
-        el('span', {}, el('small', { text: 'Cast' }), el('strong', { text: `${data.characters.length} character${data.characters.length === 1 ? '' : 's'}` })),
-        el('span', {}, el('small', { text: 'Scenes' }), el('strong', { text: String(data.scenes.length) })),
-      ),
-      el('div', { class: 'cast-preview' }, ...data.characters.map((character, index) => el('div', { class: 'cast-chip' }, avatar(character, 'sm'), el('span', { text: `${character.name} · ${memberFor(character).role}` })))),
-      el('div', { class: 'detail-box' }, el('h3', { text: 'Opening' }), el('p', { text: data.opening_scene })),
-      el('div', { class: 'profile-actions' },
-        el('button', { type: 'button', class: 'secondary', text: 'Save private draft', on: { click: async () => { validateCast(); await save(); closeModal(); await refresh(); toast(t('saved')) } } }),
-        el('button', { type: 'button', class: 'secondary', text: t('publish'), on: { click: async () => { validateCast(); await save(); await publishDraft(draft.id, false) } } }),
-        el('button', { type: 'button', text: t('publishPlay'), on: { click: async () => { validateCast(); await save(); await publishDraft(draft.id, true) } } }),
-      ),
-      el('p', { class: 'microcopy', text: 'Playtest creates your own private playthrough. It does not publish the story outside this Tavern.' }),
-    )
-  }
-  openWizard({ title: `${t('editDraft')}: ${draft.title}`, labels: ['Overview', 'Cast', 'World', 'Scenes', 'Preview'], renderStep, onNext: async step => { if (step === 1) validateCast(); if (step < 4) await save() }, finishLabel: 'Close', onFinish: closeModal })
-}
-
-async function publishDraft(draftId, startPlaythrough) {
-  const result = await api(`/api/creator/drafts/${encodeURIComponent(draftId)}/publish`, { method: 'POST', body: JSON.stringify({ start_playthrough: startPlaythrough, persona_id: currentDefaultPersona()?.id || null }) })
-  closeModal()
-  await refresh()
-  toast(t('created'))
-  if (result.playthrough?.conversation?.id) return openConversation(result.playthrough.conversation.id)
-  if (result.story) return openStoryDetail(result.story.id)
-  if (result.character) return openCharacterProfile(result.character.id)
+  const cast = el('fieldset', { class: 'new-content-cast' },
+    el('legend', { text: uiText('初始角色阵容', 'Initial Cast') }),
+    ...characters.map(character => el('label', { class: 'checkbox-field' },
+      el('input', { type: 'checkbox', name: 'character_id', value: character.id }),
+      avatar(character, 'sm'),
+      el('span', {}, el('strong', { text: character.name }), el('small', { text: character.description || uiText('没有公开描述', 'No public description') })),
+    )),
+  )
+  const form = el('form', { class: 'friendly-form blank-content-form' },
+    el('p', { text: uiText('只建立标题、角色引用和空的标准结构；情节、语气、场景与因果规则均由你在完整编辑器或源文件中明确填写。', 'This creates only a title, Character references, and an empty standard structure. You explicitly author plot, tone, Scenes, and causal rules in the editor or source file.') }),
+    el('label', {}, el('span', { text: uiText('故事标题', 'Story title') }), el('input', { name: 'title', required: true, maxlength: 200, autocomplete: 'off' })),
+    cast,
+    el('button', { type: 'submit', text: uiText('建立空白故事文件', 'Create blank Story file') }),
+  )
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    const selected = [...form.querySelectorAll('input[name="character_id"]:checked')].map(input => input.value)
+    if (!selected.length) return toast(uiText('请至少选择一个角色。', 'Choose at least one Character.'))
+    const button = form.querySelector('button[type="submit"]')
+    button.disabled = true
+    try {
+      const values = formObject(form)
+      const result = await api('/api/library/items', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind: 'story',
+          content: {
+            title: values.title,
+            cast: selected.map(characterId => ({ character_id: characterId, role: '', public_context: '', private_context: '', metadata: {} })),
+          },
+        }),
+      })
+      closeModal()
+      await refresh()
+      state.libraryTab = 'stories'
+      showView('library')
+      await openStoryEditor(result.item.id)
+    } catch (error) { button.disabled = false; toast(error.message, 7000) }
+  })
+  openModal(uiText('空白故事', 'Blank Story'), form, { wide: true })
 }
 
 function openPersonaEditor(personaId = null) {
@@ -2131,7 +1884,7 @@ function installExtensionDialog() {
   let manifest = null
   const preview = el('div', { class: 'import-preview muted-box' },
     el('strong', { text: 'Choose an extension pack to preview it.' }),
-    el('p', { text: 'Extensions may add story templates, character templates, quick actions, and visual themes. They cannot execute code.' }),
+    el('p', { text: 'Extensions may contribute optional data blueprints, composer actions, and visual themes. They cannot execute code or silently change core Library creation.' }),
   )
   const fileInput = el('input', { type: 'file', accept: 'application/json,.json,.tavern-extension', hidden: true })
   const paste = el('textarea', { name: 'manifest', rows: 10, placeholder: '{ "format": "harness-tavern-extension", … }' })
@@ -2162,9 +1915,9 @@ function installExtensionDialog() {
         el('h3', { text: result.manifest.name }),
         el('p', { text: result.manifest.description || 'No description provided.' }),
         el('p', { text: [
-          `${counts.story_templates || 0} story templates`,
-          `${counts.character_templates || 0} character templates`,
-          `${counts.quick_actions || 0} quick actions`,
+          `${counts.story_templates || 0} Story blueprints`,
+          `${counts.character_templates || 0} Character blueprints`,
+          `${counts.quick_actions || 0} composer actions`,
           `${counts.themes || 0} themes`,
         ].join(' · ') }),
         ...result.warnings.map(message => el('p', { class: 'microcopy', text: message })),
@@ -2218,7 +1971,7 @@ function showOnboarding() {
       el('div', { class: 'onboarding-actions' },
         el('button', { on: { click: () => finish('characters') } }, el('span', { text: '✦' }), el('strong', { text: t('talkCharacter') })),
         el('button', { on: { click: () => finish('stories') } }, el('span', { text: '◇' }), el('strong', { text: t('enterStory') })),
-        el('button', { on: { click: () => finish('create') } }, el('span', { text: '＋' }), el('strong', { text: t('makeWorld') })),
+        el('button', { on: { click: () => finish('library') } }, el('span', { text: '↥' }), el('strong', { text: t('openLibrary') })),
       ),
     ))
   }
@@ -2226,8 +1979,8 @@ function showOnboarding() {
     await api('/api/user-profile', { method: 'PATCH', body: JSON.stringify({ onboarding_complete: true, locale: getLocale() }) })
     layer.classList.add('hidden')
     await refresh()
-    if (destination === 'characters' || destination === 'stories') { state.libraryTab = destination; showView('library') }
-    else showView(destination)
+    if (destination === 'characters' || destination === 'stories') state.libraryTab = destination
+    showView('library')
   }
   first()
 }
@@ -2302,8 +2055,8 @@ function wireEvents() {
       'view-stories': () => { state.libraryTab = 'stories'; showView('library') },
       'view-characters': () => { state.libraryTab = 'characters'; showView('library') },
       'view-all-chats': () => showView('chats'),
-      'quick-create-character': () => quickCreate('character'),
-      'quick-create-story': () => quickCreate('story'),
+      'open-library': () => showView('library'),
+      'new-content': openNewContent,
       'new-chat': () => { state.libraryTab = 'characters'; showView('library') },
       'open-import': () => openImportDialog(),
       'export-library': async () => downloadJson(await api('/api/exports/library'), 'my-tavern-library.tavern.json'),
@@ -2349,7 +2102,8 @@ async function bootstrap() {
   wireEvents()
   const hash = location.hash.replace(/^#/, '')
   if (hash.startsWith('chat/')) await openConversation(decodeURIComponent(hash.slice(5)))
-  else showView(['home','chats','library','create','settings'].includes(hash) ? hash : 'home', { updateHash: false })
+  else if (hash === 'create') showView('library')
+  else showView(['home','chats','library','settings'].includes(hash) ? hash : 'home', { updateHash: false })
   if (!state.boot.user_profile.onboarding_complete) showOnboarding()
   await handleShareFromUrl()
   const oauth = new URL(location.href).searchParams.get('oauth')

@@ -104,15 +104,13 @@ For a complete move, the migration workspace accepts a SillyTavern backup ZIP or
 ```json
 {
   "format": "harness-tavern-extension",
-  "version": 1,
-  "manifest": {
-    "id": "my-template-pack",
-    "name": "My Template Pack",
-    "version": "1.0.0",
-    "author": "Creator",
-    "capabilities": ["story_templates", "quick_actions"]
-  },
-  "contributions": {
+  "format_version": 1,
+  "id": "extension-example-tools",
+  "slug": "example-tools",
+  "name": "Example tools",
+  "version": "1.0.0",
+  "publisher": "Example author",
+  "capabilities": {
     "story_templates": [],
     "character_templates": [],
     "quick_actions": [],
@@ -121,12 +119,14 @@ For a complete move, the migration workspace accepts a SillyTavern backup ZIP or
 }
 ```
 
-### Supported contributions
+### Supported declarative contributions
 
-- **Character templates** — friendly defaults for relationship, voice, and energy.
-- **Story templates** — friendly defaults for genre, tone, cast size, and player role.
-- **Quick actions** — optional composer prompts such as “look around” or “let them continue”.
+- **Character templates** — optional opaque Character blueprint data owned by the extension.
+- **Story templates** — optional opaque Story blueprint data owned by the extension.
+- **Quick actions** — optional composer text owned by the extension.
 - **Themes** — restricted visual design tokens.
+
+The registry inventories and exposes these contributions, but core **Library → New** does not apply template defaults or treat them as generation instructions. If an extension offers an opinionated assistant, it must present that behavior as extension-owned and submit its result as an explicit standard Character or Story through the normal validation boundary.
 
 ### Rejected content
 
@@ -140,4 +140,4 @@ This is intentional. Community extensions should be understandable, reviewable, 
 
 ## Extensibility boundary
 
-The declarative extension registry is the stable end-user seam. Provider adapters and DeepSeek Harness/Cordis integrations are developer seams. A future code plugin system should run outside the default trust boundary and require explicit administrator installation; imported Tavern content must never silently become executable code.
+The explicit Character/Story model is the stable interoperability seam. The declarative extension registry is an optional end-user seam; Provider adapters and DeepSeek Harness/Cordis integrations are developer seams. A future code plugin system should run outside the default trust boundary and require explicit administrator installation; imported Tavern content must never silently become executable code or silently redefine core Library creation.

@@ -6,16 +6,24 @@ All notable changes are documented here. The format follows Keep a Changelog, an
 
 ### Added
 
-- Complete post-publication Character and Story workbenches covering authored identity, voice, private intent, Cast, Lore, Markdown Scenes, causal State, Actions, Agendas, visibility, compatibility data, and raw canonical source access.
+- A discoverable Library content-type contract and strict `/api/library/items` endpoint for explicit Character and Story structures.
+- Read-only compatibility access for legacy generated drafts and an ADR defining the framework-first authoring boundary.
+- Complete Character and Story workbenches covering authored identity, voice, private intent, Cast, Lore, Markdown Scenes, causal State, Actions, Agendas, visibility, compatibility data, and raw canonical source access.
 - Source-aware optimistic conflict protection so browser edits cannot silently overwrite newer Character resources or Story files.
 - A documentation home, ordinary-user getting-started guide, and comprehensive developer guide covering the project's causal construction principles, repository structure, contribution workflow, and change-specific validation expectations.
 - Repository checks for broken local links in Markdown documentation.
 
 ### Changed
 
+- Library-first **New** and **Import** actions now replace the separate creative dashboard. Blank Character/Story flows add only the minimum valid structure and immediately open the complete editor.
+- Built-in extensions provide presentation foundations but no creative templates or fixed composer prompts; optional extension blueprints never drive core creation implicitly.
 - Story Cast editing and persistence no longer applies the former arbitrary 20-member storage ceiling.
 - Rebuilt the English and Chinese READMEs as approachable product introductions with a guided first-run path, migration and ownership explanations, honest deployment boundaries, and audience-based documentation navigation.
 - Expanded the GitHub contribution entrypoint to connect architectural invariants with practical branch, test, security, and pull-request requirements.
+
+### Removed
+
+- The opinionated brief-to-draft generator, generated draft publish state machine, and built-in Story-to-template workflow. Retired HTTP routes return 410 without deleting existing draft rows.
 
 ## [0.13.0] - 2026-08-30
 

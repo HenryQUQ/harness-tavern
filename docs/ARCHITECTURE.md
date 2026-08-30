@@ -11,13 +11,13 @@ DeepSeek Harness is treated as an optional compositional substrate. The Tavern d
 ```text
 HTTP and browser surfaces
 ├── Player application
-├── Creator application
+├── Content authoring workspaces
 └── Public share page
 
 Human-facing services
 ├── Home aggregation
 ├── Player Journal
-├── Guided Creator
+├── Explicit Library content lifecycle
 ├── Sharing and import
 ├── Editable Story source workspace
 └── Declarative Extension Registry
@@ -29,8 +29,7 @@ Tavern domain
 ├── Story Cast
 ├── Playthrough
 ├── Conversation Cast
-├── Timeline / Branch
-└── Creator Draft
+└── Timeline / Branch
 
 Runtime
 ├── Context Builder
@@ -95,9 +94,11 @@ The Story Cast stores public and private context separately. The control planner
 
 ## Application services
 
-### Guided Creator
+### Library content lifecycle
 
-The default generator is deterministic and local. It converts an ordinary-language brief and friendly template into an editable draft. Publishing maps temporary cast identifiers to durable Character identifiers inside a transaction and materializes a canonical Story source.
+`LibraryService` is a small, framework-level boundary. It advertises content kinds and accepts only `{ kind, content }`, where `content` is explicitly supplied by the caller. A Character is persisted through the complete Character model. A Story is materialized immediately as a canonical `harness-tavern-story/v2` source with explicit Cast references and blank structural defaults where required by the schema.
+
+The service does not interpret briefs, invoke a creative prompt, apply extension templates, choose a genre, synthesize Cast members, or maintain a draft/publish state machine. Complete editors, direct files, imports, and optional extensions all converge on the same explicit standard models. Legacy generated draft rows remain read-only for recovery and are not part of current domain behavior.
 
 ### Story sources
 
@@ -115,7 +116,7 @@ Public shares persist a sanitized snapshot and token hash. They do not read the 
 
 ### Extensions
 
-The Extension Registry accepts a strict declarative schema and merges enabled contributions into the creator and composer experience. It never imports executable code.
+The Extension Registry accepts a strict declarative schema and inventories enabled data blueprints, composer actions, and presentation themes. It never imports executable code. Core Library creation does not automatically consume blueprint defaults; an extension that provides opinionated assistance must own that visible behavior and submit explicit standard content through the normal validation boundary.
 
 ## Provider abstraction
 

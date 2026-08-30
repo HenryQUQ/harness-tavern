@@ -32,7 +32,7 @@ The first startup creates an offline demo connection, a default Persona, three s
 The initial setup asks only:
 
 1. what the Tavern should call you;
-2. whether you want to meet a character, enter a Story, or create something.
+2. whether you want to meet a Character, enter a Story, or open the Library.
 
 Choose any route. The built-in demo connection is selected automatically, so provider setup does not interrupt the first experience.
 
@@ -108,9 +108,11 @@ Harness Tavern shows a read-only preview before import. Review warnings and choo
 
 Read [Migration](MIGRATION.md) for the exact compatibility and rollback boundary.
 
-## Create and share content
+## Add, edit, and share content
 
-Open **Create** to describe a Character or Story in ordinary language. Generation produces an editable draft first; nothing is published until you review it.
+Open **Library → New** to create a blank Character or Story, or import an existing standard file. A blank Character asks only for a name. A blank Story asks only for a title and explicit Cast, then creates an empty `harness-tavern-story/v2` structure. Harness Tavern does not invent authored fields from a brief or fixed prompt.
+
+The complete editors expose all Character and Story fields after the structure exists. You can also edit a Story source with a text editor and Git. An optional extension may provide its own opinionated assistance, but the core Library always receives explicit standard content.
 
 Use:
 
@@ -119,7 +121,7 @@ Use:
 - **Editable Story source** when another creator should inspect, version, or modify the work;
 - **Portable playthrough** when the recipient should continue the same causal history.
 
-See [Creator guide](CREATOR_GUIDE.md) and [Sharing and extensions](SHARING_AND_EXTENSIONS.md).
+See [Content authoring guide](CREATOR_GUIDE.md) and [Sharing and extensions](SHARING_AND_EXTENSIONS.md).
 
 ## Back up your Tavern
 

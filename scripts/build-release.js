@@ -238,9 +238,13 @@ addCheck(checks, 'fresh-user-journey', journey.status === 0 && /"passed"\s*:\s*t
 
 const publicText = filesUnder(join(root, 'public'), path => /\.(?:html|js)$/.test(path)).map(path => readFileSync(path, 'utf8')).join('\n')
 const lowerPublic = publicText.toLocaleLowerCase()
-const requiredNav = ['data-view="home"', 'data-view="chats"', 'data-view="library"', 'data-view="create"', 'data-view="settings"']
-addCheck(checks, 'tavern-primary-navigation', requiredNav.every(token => lowerPublic.includes(token)) && !lowerPublic.includes('data-view="models"'), 'Home, Chats, Library, Create and Settings are primary; Models is not.')
-addCheck(checks, 'guided-creation-surface', /describe (?:the )?character|描述.*角色/iu.test(publicText) && /describe (?:the )?story|描述.*故事/iu.test(publicText), 'Natural-language character and story entry points are present.')
+const requiredNav = ['data-view="home"', 'data-view="chats"', 'data-view="library"', 'data-view="settings"']
+addCheck(checks, 'tavern-primary-navigation', requiredNav.every(token => lowerPublic.includes(token)) && !lowerPublic.includes('data-view="create"') && !lowerPublic.includes('data-view="models"'), 'Home, Chats, Library and Settings are primary; Create and Models are not separate primary products.')
+addCheck(checks, 'framework-first-content-surface',
+  lowerPublic.includes('data-action="new-content"')
+    && publicText.includes('/api/library/items')
+    && !/quickCreate|Describe a story|Create editable draft/.test(publicText),
+  'Library supports blank standard structures and import without a fixed-prompt creative workflow.')
 addCheck(checks, 'sharing-surface', lowerPublic.includes('share') && lowerPublic.includes('import') && lowerPublic.includes('preview'), 'Share, import and preview surfaces are present.')
 addCheck(checks, 'extension-surface', lowerPublic.includes('extension') || lowerPublic.includes('add-on'), 'No-code add-on management is present.')
 addCheck(checks, 'no-primary-technical-state', !/<button[^>]*>\s*state\s*<\/button>/iu.test(publicText) && !requiredNav.some(() => false), 'Raw state is not a primary player control.')
@@ -379,7 +383,7 @@ writeFileSync(join(releaseDir, 'ARTIFACT_VERIFICATION.md'), [
   'The browser process available in this execution environment is not used as a release gate. HTTP, SSE, static browser modules, and user journeys are covered by deterministic tests.',
 ].join('\n'))
 
-writeFileSync(join(releaseDir, '交付说明.md'), `# Harness Tavern ${version} 交付说明\n\n本版本围绕非技术用户重新设计：普通玩家只需要选择角色或故事并开始聊天；创作者可用自然语言向导生成、预览、修改和发布内容。\n\n分享支持公开预览、完整可玩包、导入预检、冲突策略和撤销；扩展采用声明式无代码格式，不执行导入包中的 JavaScript。\n\n快速启动：\n\n\`\`\`bash\nunzip harness-tavern-${version}-source.zip\ncd harness-tavern-${version}\nnpm start\n\`\`\`\n\n默认地址：\`http://127.0.0.1:8787\`。内置演示模型无需 API Key。\n`)
+writeFileSync(join(releaseDir, '交付说明.md'), `# Harness Tavern ${version} 交付说明\n\n本版本采用框架优先的内容模型：普通玩家只需要选择角色或故事并开始聊天；内容作者可以建立空白 Character / Story 标准结构、完整编辑或导入已有文件。核心不会通过固定 Prompt 从 brief 补写题材、人物或情节。\n\n分享支持公开预览、完整可玩包、导入预检、冲突策略和撤销；扩展采用声明式无代码格式，不执行导入包中的 JavaScript。\n\n快速启动：\n\n\`\`\`bash\nunzip harness-tavern-${version}-source.zip\ncd harness-tavern-${version}\nnpm start\n\`\`\`\n\n默认地址：\`http://127.0.0.1:8787\`。内置演示模型无需 API Key。\n`)
 
 const componentArtifacts = [
   sourceZip,

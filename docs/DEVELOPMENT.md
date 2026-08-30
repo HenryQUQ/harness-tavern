@@ -44,6 +44,7 @@ These principles are product contracts, not implementation preferences.
 | Failure is resumable | A received command survives provider failure, and resume cannot replay committed effects. |
 | History is branch-safe | A child Timeline sees its parent only through the recorded branch boundary. |
 | Content is portable | Authored Story files use stable keys; exports do not depend on local database IDs or credentials. |
+| Core owns structure, not taste | Blank creation and import produce explicit standard content; fixed creative prompts and opinionated authoring methods belong to visible optional extensions. |
 | Incomplete is not complete | Truncated, malformed, or contradictory model output never appears as an accepted final reply. |
 | Complexity is progressive | Ordinary players use Tavern concepts; runtime and provider controls remain optional advanced surfaces. |
 
@@ -79,21 +80,21 @@ Dependencies point inward toward product contracts. HTTP handlers should not bec
 |---|---|
 | `src/main.js` | CLI entrypoint for serve, seed, and doctor commands. |
 | `src/app.js` | Composition root that wires storage, providers, domain services, runtime, sharing, and HTTP contracts. |
-| `src/domain/` | Normalization, creator workflows, journal projections, presets, repository-facing Tavern operations. |
+| `src/domain/` | Explicit Library lifecycle, normalization, journal projections, presets, and repository-facing Tavern operations. |
 | `src/runtime/` | Context assembly, control-plan contracts, Action resolution, reasoning policy, and durable turn execution. |
 | `src/providers/` | Provider catalog and protocol adapters behind one portable completion seam. |
 | `src/storage/` | SQLite schema/migrations and encrypted credential vault. |
 | `src/story/` | Editable Story resource loading, validation, binding, compilation, and synchronization. |
 | `src/sharing/` | Public projections, pack integrity, portable import/export, and identifier remapping. |
 | `src/migrations/` | Preview-first migration from external formats such as SillyTavern. |
-| `src/extensions/` | Strictly declarative templates, quick actions, and theme contributions. |
+| `src/extensions/` | Strictly declarative optional data blueprints, composer actions, and theme contributions. |
 | `src/server/` | HTTP authentication, routing, request limits, static assets, and response serialization. |
 | `public/` | Dependency-free browser application and public share page. |
 | `schemas/` | Versioned portable JSON Schema contracts. |
 | `examples/` | Checked-in authoring examples that must remain valid inputs. |
 | `tests/` | Deterministic domain, runtime, provider, HTTP, migration, sharing, and usability tests. |
 | `scripts/` | Repository checks, user-journey verification, Story CLI, live opt-in checks, and release construction. |
-| `docs/` | User, creator, architecture, developer, API, security, and operations documentation. |
+| `docs/` | User, authoring, architecture, developer, API, security, and operations documentation. |
 
 ## A turn from request to narration
 
@@ -279,6 +280,7 @@ Avoid solving a domain problem only in the browser or an HTTP handler. A UI-only
 ### 4. Implement the smallest coherent change
 
 - preserve existing persisted data unless an explicit migration is included;
+- keep universal structure and validation in core; do not turn a creative workflow or fixed prompt into a mandatory product path;
 - keep provider-specific logic in `src/providers/`;
 - keep deterministic effects out of model prose;
 - update all projections when a field has different player, creator, and private representations;

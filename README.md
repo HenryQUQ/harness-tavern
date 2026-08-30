@@ -56,8 +56,8 @@ That gives you:
 |---|---|
 | Meet a character | Start with an editable character profile and keep the relationship across sessions. |
 | Enter a story | Play narrator-only, single-character, or ensemble stories through the same simple interface. |
-| Edit anything you authored | Reopen any published Character or Story and change its voice, private intent, Cast, Lore, Scenes, Actions, Agendas, or metadata. |
-| Create without code | Describe a character or story in ordinary language, review the draft, then publish it. |
+| Edit anything you authored | Reopen any Character or Story and change its voice, private intent, Cast, Lore, Scenes, Actions, Agendas, or metadata. |
+| Author without a fixed generator | Start from a blank standard structure or import a portable file, then edit every field directly. The core never expands a brief with a built-in creative prompt. |
 | Choose any AI | Switch between connected APIs and models without changing your characters or saves. |
 | Tune the response | Use presets for style, sampling, reasoning strength, initiative, and context behavior. |
 | Bring your library | Preview and migrate compatible SillyTavern characters, chats, groups, worlds, personas, and presets. |
@@ -83,7 +83,7 @@ For a guided walkthrough, connection setup, migration, backups, and troubleshoot
 ## Your first few minutes
 
 1. Tell the Tavern what it should call you.
-2. Choose **Meet a character**, **Enter a story**, or **Create**.
+2. Choose **Meet a character**, **Enter a story**, or open **Library → New** for a blank Character or Story.
 3. Try an action and open the Story Engine panel to see known facts, visible action results, ongoing intent, and timelines.
 4. When you are ready, open **Settings → AI Connections** to add your preferred service.
 5. Open the model menu inside a chat to switch API, model, or response preset.
@@ -100,7 +100,7 @@ See the full [migration guide](docs/MIGRATION.md).
 
 ## Stories remain yours
 
-Every published Story has an editable `harness-tavern-story/v2` source:
+Every Story has an editable `harness-tavern-story/v2` source:
 
 - use one self-contained JSON file for a compact Story;
 - use a folder of Character, Lorebook, Markdown Scene, Action, and Agenda files for a larger project;
@@ -108,7 +108,9 @@ Every published Story has an editable `harness-tavern-story/v2` source:
 - validate and version the files with Git;
 - export without provider credentials or local database identifiers.
 
-The visual Character and Story workspaces cover the complete authored model after publication. System identifiers, causal event history, and saved playthrough facts remain separate and read-only, so editing the work never rewrites what already happened in a playthrough.
+The visual Character and Story workspaces cover the complete authored model. System identifiers, causal event history, and saved playthrough facts remain separate and read-only, so editing the work never rewrites what already happened in a playthrough.
+
+Library creation is intentionally structural: it asks only for the minimum identity and references needed to create a valid blank file. Genre, personality, prose, Scenes, and causal rules stay empty until you explicitly author or import them. Opinionated assistance can live in an optional extension, but it is not a hidden policy of the core.
 
 This keeps authored content separate from conversations and playthrough state. Learn more in [Editable Story sources](docs/STORY_SOURCES.md) or open the [included multi-file example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
 
@@ -120,14 +122,14 @@ This keeps authored content separate from conversations and playthrough state. L
 - Imported extensions are declarative; executable fields are rejected.
 - Harness Tavern does not silently cut accepted narration at an application character limit. If a provider returns an incomplete result, the turn is suspended instead of displaying partial prose as a completed reply.
 
-Version 0.13.0 is a **local-first, single-owner beta**. It is ready for real local roleplay, creation, migration, and continued development, but it is not an audited multi-tenant hosted service. Read [Security](docs/SECURITY.md) and [Operations](docs/OPERATIONS.md) before exposing it beyond your own machine.
+Version 0.13.0 is a **local-first, single-owner beta**. It is ready for real local roleplay, content authoring, migration, and continued development, but it is not an audited multi-tenant hosted service. Read [Security](docs/SECURITY.md) and [Operations](docs/OPERATIONS.md) before exposing it beyond your own machine.
 
 ## Documentation
 
 | I want to… | Start here |
 |---|---|
 | Install and use the Tavern | [Getting started](docs/GETTING_STARTED.md) |
-| Create a character or Story | [Creator guide](docs/CREATOR_GUIDE.md) |
+| Author a Character or Story | [Content authoring guide](docs/CREATOR_GUIDE.md) |
 | Move from SillyTavern | [Migration guide](docs/MIGRATION.md) |
 | Edit Story files directly | [Story source guide](docs/STORY_SOURCES.md) |
 | Understand the project or contribute | [Developer guide](docs/DEVELOPMENT.md) |
