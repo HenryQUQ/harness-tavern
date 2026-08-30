@@ -34,9 +34,10 @@ The data directory contains:
 
 - `tavern.sqlite3`, including content, events, settings, and encrypted credential envelopes;
 - `credentials.key`, required to decrypt provider credentials;
+- `stories/`, containing canonical editable Story files and recoverable `.trash` entries;
 - SQLite journal files while the process is active.
 
-The database and key file are both required for a usable credential backup. Store them together in an encrypted backup system, but keep access controls separate from application operators where practical.
+The database, key file and Story source workspace are all required for a complete backup. If `HT_STORY_SOURCE_DIR` points outside `HT_DATA_DIR`, back up that directory separately. Store them together in an encrypted backup system, but keep access controls separate from application operators where practical.
 
 ## Backup
 
@@ -53,7 +54,7 @@ For online backups, use SQLite's supported backup mechanism rather than copying 
 
 1. stop the application;
 2. preserve the failed data directory for investigation;
-3. restore the database and matching `credentials.key` into a new directory with owner-only permissions;
+3. restore the database, matching `credentials.key`, and Story source workspace with owner-only permissions;
 4. point `HT_DATA_DIR` at the restored directory;
 5. run `npm run doctor` before accepting traffic.
 
@@ -63,4 +64,4 @@ Read `CHANGELOG.md` and take a verified backup before upgrading. Rollback is saf
 
 ## Monitoring
 
-Monitor process restarts, health failures, filesystem capacity, backup age, provider latency/error rates, and model finish reasons. Treat repeated `length` finishes as a provider/model capacity issue; incomplete model output is intentionally not committed to the transcript.
+Monitor process restarts, health failures, filesystem capacity, backup age, suspended Control Loops, provider latency/error rates, and model finish reasons. Treat repeated `length` finishes as a provider/model capacity issue. The received command remains durable while malformed or incomplete model output is excluded from character prose; resume after correcting the connection does not replay committed effects.

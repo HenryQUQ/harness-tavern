@@ -5,9 +5,9 @@
 
 [English](README.md)
 
-Harness Tavern 是一个以 **Tavern 体验为核心**的持久角色聊天与角色扮演应用。用户面对的是角色、关系、故事、场景、回忆和选择；事件日志、状态事务、模型路由、私人知识和回放等 Harness 能力隐藏在后台。
+Harness Tavern 是一个以 **Tavern 体验为核心的因果故事引擎**。Chat 只是叙事视图，不是事实来源：持久 State、可恢复 Control Loop、声明式 Action、按角色隔离的 Observation、持续 Intent 和可回放 Event 共同决定“实际上发生了什么”。
 
-当前版本：**0.12.0**
+当前版本：**0.13.0**
 
 ## 一条命令启动
 
@@ -26,6 +26,8 @@ npm start
 - **使用酒馆语言，而不是基础设施语言。** 一级入口是 Home、Chats、Library、Create、Settings。
 - **逐步展开复杂度。** 模型连接、路由、回复深度、费用和创作者调试信息都存在，但不会阻挡第一次体验。
 - **用户永远拥有自己的角色。** 系统不能代替用户说话、思考、感受、决定身份或宣告行动成功。
+- **文字不能创造事实。** 模型提出意图；Action 规则先验证条件并提交效果，然后模型才能叙述结果。与事实冲突的草稿会被丢弃、纠正，必要时直接回退到已验证 Observation。
+- **意图持续到事实终止它。** 角色 Action 必须来自该角色拥有的活跃 Agenda；只有作者声明的状态条件才能完成、失败、暂停或恢复持续意图。
 - **私人知识必须隔离。** 玩家 Journal、公开分享预览和创作者 Inspector 使用不同的数据投影。
 - **内容先于平台锁定。** 角色和故事可以通过版本化 Tavern Pack 或便携分享链接迁移。
 - **扩展不等于执行陌生代码。** 可导入扩展仅包含声明式模板、快捷动作和主题。
@@ -70,6 +72,9 @@ Journal 把底层状态转换成玩家容易理解的内容：
 - 关系描述；
 - 玩家可见的世界状态；
 - 时间线。
+- 已解决或被拒绝的 Action receipt；
+- 玩家可见的事实、Observation 与公开持续意图；
+- State revision 和 Context assembly 策略。
 
 Director-only Lore 与角色私人知识不会出现在玩家 Journal 中。
 
@@ -121,7 +126,15 @@ Harness Tavern 提供三种分享层级。
 - **Replace**：更新匹配内容；
 - **Skip**：复用已有匹配内容。
 
-SillyTavern Character Card V2 风格 JSON 也通过相同的预览与导入流程处理。
+SillyTavern Character Card V2/V3 JSON、PNG 和 CHARX 也通过相同的预览与导入流程处理。完整迁移工作区可以扫描 SillyTavern 用户数据目录或 ZIP，在写入前预览 Characters、Chats、Group Chats、Groups、World Info、Personas 和兼容预设。`secrets.json` 永远排除；扩展、Quick Replies、主题和向量索引只做清单，不执行、不当成可信状态。
+
+### 可编辑 Story v2
+
+无角色旁白故事、单人故事和多人故事使用同一个 `harness-tavern-story/v2` 标准。小故事可以是一个自包含 JSON 文件；大故事可以拆成 `story.tavern.json`、Character Card、Lorebook、Markdown Scene、Action 和 Agenda 文件。它们使用稳定 key，可直接编辑、放进 Git、验证并重新编译到 SQLite。
+
+### 可移植存档
+
+Story Pack 使用 SHA-256 完整性校验（不是作者身份签名）。Playthrough Pack 会携带因果事件流，可在另一个实例继续同一组事实；完整备份会包含本地 Library、Conversations、Profile 与自定义预设，但永远不包含 API 凭据或 Provider Connection。
 
 ## 安全扩展
 
@@ -146,9 +159,9 @@ SillyTavern Character Card V2 风格 JSON 也通过相同的预览与导入流�
 - Ollama、LM Studio、vLLM、llama.cpp、LocalAI；
 - 三十多个 Provider 预设。
 
-聊天标题栏会显示当前 AI 服务和模型。点击即可在已连接的 API 之间切换、刷新或手动输入模型 ID，并套用 **平衡、电影感、聚焦** 三种内置回复预设。每个对话还可以单独调整自定义 AI 指令、带入的历史消息数、思考强度、回复长度、角色主动性、多角色节奏、随机度、Top P、Top K、Min P、频率/存在/重复惩罚、随机种子、停止序列，以及有边界的 Provider 专属 JSON 参数。包括思考强度在内的全部设置都可以保存成新预设，也可以更新已有的自定义预设。
+聊天标题栏会显示当前 AI 服务和模型。点击即可在已连接的 API 之间切换、刷新或手动输入模型 ID，并套用 **平衡、电影感、聚焦** 三种内置回复预设。每个对话还可以单独调整自定义 AI 指令、带入的历史消息数、显式 Context Budget、思考强度、回复长度、角色主动性、多角色节奏、随机度、Top P、Top K、Min P、频率/存在/重复惩罚、随机种子、停止序列，以及有边界的 Provider 专属 JSON 参数。包括思考强度在内的全部设置都可以保存成新预设，也可以更新已有的自定义预设。历史与 Context Budget 默认都是空值：Tavern 不设置硬上限；用户显式设置预算时，只会省略完整 Context block，不会从 block 中间截断文字。
 
-预设区可以直接导入 SillyTavern Chat Completion 和 Text Completion JSON。应用会先预览逐项映射，把启用的 prompt 块转换成当前对话指令，保留兼容的采样器与推理强度，并清楚列出不会导入的字段；API/模型凭据和输出 Token 上限不会被带入。回复长度只是写作风格，不会转换成人为 Token 上限；输出容量交给所选服务管理，结构化回复不完整时会安全失败，不会把残缺数据显示成角色台词。
+预设区可以直接导入 SillyTavern Chat Completion 和 Text Completion JSON。应用会先预览逐项映射，把启用的 prompt 块转换成当前对话指令，保留兼容的采样器与推理强度，并清楚列出不会导入的字段；API/模型凭据和输出 Token 上限不会被带入。回复长度只是写作风格，不会转换成人为 Token 上限；输出容量交给所选服务管理，完整叙事也不会再按字符数静默切断。结构化 Control Plan 或叙事不完整时，Command 仍会持久化，Loop 会暂停；修复连接后可安全恢复，不会重复已提交效果，也不会把残缺数据显示成角色台词。
 
 应用只自动准备角色、故事和离线演示模型，不再自动创建演示对话。连接真实 API 后，新对话会优先使用真实服务；内置 Mock 仅在没有其他可用连接时作为离线回退。
 
@@ -165,8 +178,8 @@ API Key 会加密保存。除非 Provider 提供正式授权流程，否则消�
 Tavern 领域
 (Character、Persona、Story、Playthrough、Timeline、Cast)
         ↓
-统一回合运行时
-(Context → 模型 → 输出验证 → 状态事务)
+持久因果运行时
+(Command → Control Plan → Action → Observation → Narration)
         ↓
 Append-only Events + 确定性投影 + SQLite
 ```
@@ -211,4 +224,4 @@ docker compose up --build -d
 
 ## 当前边界
 
-0.12.0 是可实际用于角色聊天、故事创作、分享、评估和继续开发的本地单 Owner Beta。它不是经过独立安全审计的多租户 SaaS；多用户 RBAC、计费、集中内容治理、分布式数据库、原生移动客户端和托管市场不在本版本范围内。
+当前版本是可实际用于角色聊天、故事创作、分享、迁移、评估和继续开发的本地单 Owner Beta。它不是经过独立安全审计的多租户 SaaS；多用户 RBAC、计费、集中内容治理、分布式数据库、原生移动客户端和托管市场不在本版本范围内。

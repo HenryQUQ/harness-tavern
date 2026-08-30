@@ -21,6 +21,17 @@ function textFromContent(content) {
   return ''
 }
 
+function combinedUsage(...attempts) {
+  const normalized = attempts.map(normalizeUsage)
+  const output = {}
+  for (const key of ['promptTokens', 'completionTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
+    const values = normalized.map(item => item[key]).filter(value => value !== null && value !== undefined)
+    if (values.length) output[key] = values.reduce((sum, value) => sum + Number(value), 0)
+  }
+  output.raw = { attempts }
+  return output
+}
+
 export class OpenAiCompatibleAdapter {
   constructor({ timeoutMs = 120_000 } = {}) { this.timeoutMs = timeoutMs }
 
@@ -36,7 +47,7 @@ export class OpenAiCompatibleAdapter {
     }
     const presetOptions = presetBodyOverlay(request)
     const optionalParameters = openAiGenerationParameters(request, { deepSeek: isDeepSeek })
-    const body = {
+    let body = {
       ...safeBodyOverlay(customBody(connection)),
       ...presetOptions,
       model: request.model,
@@ -47,7 +58,7 @@ export class OpenAiCompatibleAdapter {
       stream: false,
       ...request.jsonMode ? { response_format: { type: 'json_object' } } : {},
       ...isDeepSeek ? { thinking: { type: deepSeekThinking ? 'enabled' : 'disabled' } } : {},
-      ...deepSeekThinking && plan.openAiEffort ? { reasoning_effort: plan.openAiEffort } : {},
+      ...deepSeekThinking && plan.deepSeekEffort ? { reasoning_effort: plan.deepSeekEffort } : {},
       ...!isDeepSeek && plan.openAiEffort ? { reasoning_effort: plan.openAiEffort } : {},
     }
     const endpoint = joinUrl(connection.base_url, 'chat/completions')
@@ -71,14 +82,37 @@ export class OpenAiCompatibleAdapter {
         throw error
       }
     }
-    const choice = result.body?.choices?.[0]
-    const content = textFromContent(choice?.message?.content)
+    let choice = result.body?.choices?.[0]
+    let content = textFromContent(choice?.message?.content)
+    let emptyJsonAttempt = null
+    let fallback = null
+    // DeepSeek documents that JSON mode can occasionally return an empty
+    // content string. Retry that exact request once with a stronger JSON
+    // reminder and thinking disabled; do not introduce an output ceiling.
+    if (isDeepSeek && request.jsonMode && !content.trim() && choice?.finish_reason !== 'length') {
+      emptyJsonAttempt = result
+      body = {
+        ...body,
+        messages: body.messages.map((message, index) => index === 0
+          ? { ...message, content: `${message.content}\n\nJSON RETRY REQUIREMENT: Return the complete non-empty JSON object now. Never return only whitespace.` }
+          : message),
+        thinking: { type: 'disabled' },
+      }
+      delete body.reasoning_effort
+      result = await fetchJson(endpoint, {
+        method: 'POST', headers, body: JSON.stringify(body), signal,
+      }, { timeoutMs: this.timeoutMs, retries: 0 })
+      choice = result.body?.choices?.[0]
+      content = textFromContent(choice?.message?.content)
+      fallback = 'deepseek-empty-json-non-thinking-retry'
+    }
     return {
       content,
       reasoningContent: textFromContent(choice?.message?.reasoning_content),
       finishReason: choice?.finish_reason ?? null,
-      usage: normalizeUsage(result.body?.usage),
-      raw: result.body,
+      usage: emptyJsonAttempt ? combinedUsage(emptyJsonAttempt.body?.usage, result.body?.usage) : normalizeUsage(result.body?.usage),
+      raw: emptyJsonAttempt ? { first_attempt: emptyJsonAttempt.body, retry: result.body } : result.body,
+      fallback,
       requestBody: body,
       responseHeaders: Object.fromEntries(result.headers.entries()),
     }

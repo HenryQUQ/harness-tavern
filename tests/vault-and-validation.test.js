@@ -25,11 +25,16 @@ await test('credential vault stores authenticated ciphertext and enforces privat
 await test('configuration requires a token when binding beyond loopback', () => {
   assert.throws(() => loadConfig({ HT_HOST: '0.0.0.0', HT_PORT: '8787', HT_DATA_DIR: '/tmp/ht-config-test' }), /HT_ACCESS_TOKEN/)
   const config = loadConfig({ HT_HOST: '0.0.0.0', HT_PORT: '8787', HT_ACCESS_TOKEN: 'token', HT_DATA_DIR: '/tmp/ht-config-test' })
+  assert.equal(config.migrationBodyLimit, 128_000_000)
+  assert.throws(() => loadConfig({ HT_DATA_DIR: '/tmp/ht-config-test', HT_MIGRATION_BODY_LIMIT: 'invalid' }), /HT_MIGRATION_BODY_LIMIT/)
+  assert.throws(() => loadConfig({ HT_DATA_DIR: '/tmp/ht-config-test', HT_PROVIDER_TIMEOUT_MS: '0' }), /HT_PROVIDER_TIMEOUT_MS/)
+  assert.throws(() => loadConfig({ HT_DATA_DIR: '/tmp/ht-config-test', HT_MODEL_CATALOG_TTL_MS: '2.5' }), /HT_MODEL_CATALOG_TTL_MS/)
   assert.equal(config.host, '0.0.0.0')
 })
 
 await test('model envelope falls back to a cast speaker and rejects empty output', () => {
-  const envelope = normalizeEnvelope({ response: 'Hello' }, { castIds: ['char-a'] })
-  assert.deepEqual(envelope.messages, [{ character_id: 'char-a', content: 'Hello' }])
+  const response = `Hello ${'x'.repeat(35_000)}`
+  const envelope = normalizeEnvelope({ response }, { castIds: ['char-a'] })
+  assert.deepEqual(envelope.messages, [{ character_id: 'char-a', content: response }])
   assert.throws(() => normalizeEnvelope({}, { castIds: ['char-a'] }), /user-visible message/)
 })

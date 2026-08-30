@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { basename, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,6 +34,13 @@ cpSync(source, destination, {
       && rel !== 'node_modules' && !rel.startsWith('node_modules/')
   },
 })
+const install = spawnSync('npm', ['ci', '--ignore-scripts'], { cwd: destination, encoding: 'utf8' })
+if (install.status !== 0) {
+  console.error(install.stdout || '')
+  console.error(install.stderr || '')
+  console.error('Harness Tavern source was copied, but dependency installation failed.')
+  process.exit(1)
+}
 const receipt = {
   product: 'Harness Tavern',
   version: JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version,
@@ -42,6 +50,7 @@ const receipt = {
   source_directory: basename(source),
   destination: 'products/harness-tavern',
   integration: 'isolated-product-surface',
+  dependencies_installed: true,
 }
 writeFileSync(join(destination, 'product-integration.json'), `${JSON.stringify(receipt, null, 2)}\n`)
 console.log(JSON.stringify({ ...receipt, absolute_destination: destination }, null, 2))

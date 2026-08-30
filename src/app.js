@@ -11,8 +11,10 @@ import { CreatorService } from './domain/creator.js'
 import { GenerationPresetRegistry } from './domain/generation-config.js'
 import { SharingService } from './sharing/pack.js'
 import { ShareLinkService } from './sharing/links.js'
+import { StorySourceService } from './story/source.js'
 import { ContextBuilder } from './runtime/context-builder.js'
 import { TurnRuntime } from './runtime/turn-runtime.js'
+import { SillyTavernMigrationService } from './migrations/sillytavern.js'
 import { createHttpServer } from './server/http.js'
 
 export function createApp({ env = process.env, loggerSink = console } = {}) {
@@ -24,14 +26,17 @@ export function createApp({ env = process.env, loggerSink = console } = {}) {
   const providers = new ProviderRegistry({ db, vault, config })
   const accounts = new AccountConnectionRegistry({ db, vault, config })
   const extensions = new ExtensionRegistry({ db })
-  const creator = new CreatorService({ repository, extensions })
+  const storySources = new StorySourceService({ repository, config, logger })
+  const creator = new CreatorService({ repository, extensions, storySources })
   const generationPresets = new GenerationPresetRegistry({ db })
-  const sharing = new SharingService({ repository, extensions, config })
+  const sharing = new SharingService({ repository, extensions, storySources, config })
   const shareLinks = new ShareLinkService({ db, repository, packs: sharing, config })
+  const migrations = new SillyTavernMigrationService({ db, repository, sharing, generationPresets, storySources })
   const contextBuilder = new ContextBuilder({ repository })
   const turns = new TurnRuntime({ db, repository, providers, contextBuilder, logger })
-  const app = { config, logger, db, vault, repository, providers, accounts, extensions, creator, generationPresets, sharing, shareLinks, contextBuilder, turns }
+  const app = { config, logger, db, vault, repository, providers, accounts, extensions, creator, generationPresets, sharing, storySources, shareLinks, migrations, contextBuilder, turns }
   seedDemo({ db, repository, includeConversation: config.seedSampleConversation })
+  app.storySourceStatus = storySources.bootstrap()
   const server = createHttpServer(app)
   return {
     ...app,

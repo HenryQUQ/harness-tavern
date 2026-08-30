@@ -9,7 +9,7 @@ await test('bootstrap exposes the Tavern-first experience, model choices, and en
   const { baseUrl } = await testApp(t)
   const { response, body } = await jsonRequest(baseUrl, '/api/bootstrap')
   assert.equal(response.status, 200)
-  assert.equal(body.version, '0.12.0')
+  assert.equal(body.version, '0.13.0')
   assert.deepEqual(body.thinking_intensities, ['auto', 'none', 'low', 'medium', 'high', 'max'])
   assert.ok(body.provider_presets.length >= 30)
   assert.equal(body.generation_presets.length, 3)
@@ -128,6 +128,65 @@ await test('streams a complete multi-character turn over SSE', async t => {
   assert.equal((text.match(/event: message.completed/g) ?? []).length, 3)
   assert.match(text, /event: turn.completed/)
   assert.doesNotMatch(text, /event: turn.failed/)
+})
+
+await test('player APIs expose causal outcomes without private effect paths or control plans', async t => {
+  const { app, baseUrl } = await testApp(t)
+  const turn = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}/turn`, {
+    method: 'POST',
+    body: JSON.stringify({ content: 'Take the archive key.', idempotency_key: 'http-private-receipt' }),
+  })
+  assert.equal(turn.response.status, 200)
+  assert.equal(turn.body.action_receipts[0].status, 'resolved')
+  assert.equal(turn.body.action_receipts[0].changed_fact_count, 2)
+  assert.equal('effects' in turn.body.action_receipts[0], false)
+  assert.equal('actions' in turn.body, false)
+
+  const view = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}`)
+  assert.equal('effects' in view.body.causal.recent_receipts[0], false)
+  const loop = await jsonRequest(baseUrl, `/api/control-loops/${turn.body.loop_id}`)
+  assert.equal('result' in loop.body, false)
+  assert.equal('included' in loop.body.context_manifests.control, false)
+  const narrationManifest = Object.values(loop.body.context_manifests.narration)[0]
+  assert.equal(narrationManifest.policy, 'provider-managed-no-tavern-ceiling')
+  assert.equal('included' in narrationManifest, false)
+
+  const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'action.resolved', actorId: SAMPLE_IDS.rowan,
+    payload: { status: 'resolved', action_id: 'npc-private-action', action_type: 'speak', actor_id: SAMPLE_IDS.rowan, outcome: 'succeeded', reason: 'PRIVATE_NPC_AGENDA_REASON', effects: [] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'observation.created', actorId: SAMPLE_IDS.rowan,
+    payload: { id: 'npc-private-observation', action_id: 'npc-private-action', actor_id: SAMPLE_IDS.rowan, audience: ['director'], content: 'PRIVATE_NPC_OBSERVATION', kind: 'result' },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'action.resolved', actorId: SAMPLE_IDS.mira,
+    payload: { status: 'resolved', action_id: 'npc-public-action', action_type: 'speak', actor_id: SAMPLE_IDS.mira, outcome: 'succeeded', reason: 'PRIVATE_MOTIVE_BEHIND_PUBLIC_ACTION', effects: [] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'observation.created', actorId: SAMPLE_IDS.mira,
+    payload: { id: 'npc-public-observation', action_id: 'npc-public-action', actor_id: SAMPLE_IDS.mira, audience: ['public'], content: 'Mira speaks.', kind: 'result' },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'agenda.created', actorId: SAMPLE_IDS.mira,
+    payload: { id: 'public-agenda', owner_id: SAMPLE_IDS.mira, objective: 'Keep the archive safe.', priority: 1, visibility: 'public', complete_when: [{ path: 'PRIVATE_AGENDA_PATH', equals: true }] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'agenda.evaluated', actorId: SAMPLE_IDS.mira,
+    payload: { agenda_id: 'public-agenda', decision: 'defer', reason: 'PRIVATE_AGENDA_REASON' },
+  })
+  const privateSafeView = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}`)
+  assert.equal(privateSafeView.body.causal.recent_receipts.some(item => item.action_id === 'npc-private-action'), false)
+  const publicNpcReceipt = privateSafeView.body.causal.recent_receipts.find(item => item.action_id === 'npc-public-action')
+  assert.ok(publicNpcReceipt)
+  assert.equal('reason' in publicNpcReceipt, false)
+  const publicAgenda = privateSafeView.body.causal.active_agendas.find(item => item.id === 'public-agenda')
+  assert.deepEqual(publicAgenda, {
+    id: 'public-agenda', owner_id: SAMPLE_IDS.mira, objective: 'Keep the archive safe.', priority: 1,
+    status: 'active', visibility: 'public', evaluation_count: 1,
+  })
+  assert.doesNotMatch(JSON.stringify(privateSafeView.body), /PRIVATE_(?:NPC|MOTIVE|AGENDA)/)
 })
 
 await test('creates a provider connection through the advanced settings API', async t => {

@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../../schemas/lorebook.schema.json",
+  "format": "harness-tavern-lorebook",
+  "format_version": 1,
+  "name": "Glass Observatory",
+  "entries": [
+    {
+      "key": "glass-observatory",
+      "title": "The Glass Observatory",
+      "content": "A mountain institution built around an ancient orrery.",
+      "keywords": [
+        "observatory",
+        "orrery"
+      ],
+      "visibility": "public"
+    },
+    {
+      "key": "erased-gate",
+      "title": "The erased gate",
+      "content": "The alignment can open a gate to a place removed from official history.",
+      "keywords": [
+        "alignment",
+        "gate"
+      ],
+      "visibility": "director"
+    }
+  ]
+}

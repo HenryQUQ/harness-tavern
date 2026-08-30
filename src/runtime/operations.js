@@ -16,14 +16,14 @@ export function normalizeEnvelope(raw, { castIds = [] } = {}) {
   const source = raw && typeof raw === 'object' ? raw : {}
   let messages = Array.isArray(source.messages) ? source.messages : []
   if (messages.length === 0 && typeof source.response === 'string') messages = [{ character_id: castIds[0] ?? 'assistant', content: source.response }]
-  messages = messages.slice(0, 6).map(message => ({
+  messages = messages.map(message => ({
     character_id: castIds.includes(message?.character_id) ? message.character_id : castIds[0] ?? 'assistant',
-    content: cleanText(message?.content, 30_000),
+    content: typeof message?.content === 'string' ? message.content.replaceAll('\u0000', '').trim() : '',
   })).filter(message => message.content)
   assert(messages.length > 0, 'Model response did not contain a user-visible message', 502, 'invalid_model_output')
   return {
     messages,
-    state_operations: Array.isArray(source.state_operations) ? source.state_operations.slice(0, 24) : [],
+    state_operations: Array.isArray(source.state_operations) ? source.state_operations : [],
     internal_summary: cleanText(source.internal_summary, 4000),
   }
 }

@@ -12,6 +12,9 @@ const state = {
   modal: null,
   selectedTemplate: null,
   importContent: null,
+  migrationId: null,
+  inspectorTab: 'facts',
+  inspectorOpen: true,
 }
 
 function toast(message, duration = 3200) {
@@ -290,11 +293,42 @@ async function openStoryDetail(storyId) {
       latest?.current_conversation_id ? el('button', { text: t('continue'), on: { click: () => { closeModal(); openConversation(latest.current_conversation_id) } } }) : null,
       el('button', { class: latest ? 'secondary' : '', text: latest ? t('newPlaythrough') : t('beginStory'), on: { click: () => startStory(story) } }),
       el('button', { class: 'secondary', text: fav ? t('unfavorite') : t('favorite'), on: { click: () => toggleFavorite('story', story.id, !fav, () => openStoryDetail(story.id)) } }),
+      el('button', { class: 'secondary', text: 'Edit Story source', on: { click: () => openStorySourceEditor(story) } }),
       el('button', { class: 'secondary', text: t('share'), on: { click: () => openShare('story', story.id, story.title) } }),
       el('button', { class: 'secondary', text: t('saveAsTemplate'), on: { click: () => saveStoryAsTemplate(story) } }),
     ),
   )
   openModal(story.title, content, { wide: true })
+}
+
+async function openStorySourceEditor(story) {
+  const loaded = await api(`/api/story-sources/${encodeURIComponent(story.id)}`)
+  const source = el('textarea', { class: 'source-editor', rows: 28, spellcheck: 'false', value: JSON.stringify(loaded.source, null, 2) })
+  const parse = () => {
+    try { return JSON.parse(source.value) } catch (error) { throw new Error(`Story source is not valid JSON: ${error.message}`) }
+  }
+  const form = el('form', { class: 'friendly-form source-editor-form' },
+    el('div', { class: 'source-status' },
+      el('div', {}, el('strong', { text: `${loaded.source.format}/v${loaded.source.format_version}` }), el('small', { text: `${loaded.binding.kind} source · ${loaded.binding.path}` })),
+      el('span', { class: 'status-pill active', text: 'Canonical source' }),
+    ),
+    el('p', { text: 'This versioned file is the editable Story source. Saving validates character and scene references, writes the bound files, then rebuilds the SQLite runtime projection.' }),
+    el('label', {}, el('span', { text: 'Story source JSON' }), source),
+    el('div', { class: 'profile-actions' },
+      el('button', { type: 'submit', text: 'Validate and save source' }),
+      el('button', { type: 'button', class: 'secondary', text: 'Download editable source', on: { click: () => downloadJson(parse(), `${loaded.source.story_key}.story.tavern.json`) } }),
+    ),
+    el('p', { class: 'microcopy', text: 'Character keys and story_key are stable file identifiers, not local database IDs. Conversations and playthrough state stay separate.' }),
+  )
+  form.addEventListener('submit', async event => {
+    event.preventDefault()
+    const saved = await api(`/api/story-sources/${encodeURIComponent(story.id)}`, { method: 'PUT', body: JSON.stringify({ source: parse(), expected_digest: loaded.binding.digest }) })
+    closeModal()
+    await refresh()
+    toast('Story source validated and saved')
+    await openStoryDetail(saved.story.id)
+  })
+  openModal(`Edit source: ${story.title}`, form, { wide: true, autoFocus: false })
 }
 
 function saveStoryAsTemplate(story) {
@@ -345,6 +379,7 @@ async function openConversation(conversationId) {
   updateChatModelSwitch()
   renderMessages()
   renderQuickActions()
+  renderCausalInspector()
   showView('chat', { updateHash: false })
   history.replaceState(null, '', `#chat/${encodeURIComponent(conversationId)}`)
   $('#messageInput').focus()
@@ -404,6 +439,113 @@ function renderQuickActions() {
   node.append(...actions.slice(0, 12).map(action => el('button', { text: action.label, title: action.prompt, on: { click: () => applyQuickAction(action) } })))
 }
 
+function displayValue(value) {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function factRows(value, prefix = '', depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 3) return []
+  const rows = []
+  for (const [key, nested] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) rows.push(...factRows(nested, path, depth + 1))
+    else rows.push(el('div', { class: 'fact-row' }, el('span', { text: path }), el('strong', { text: displayValue(nested) })))
+  }
+  return rows
+}
+
+function inspectorSection(title, ...children) {
+  return el('section', { class: 'inspector-section' }, el('h3', { text: title }), ...children.filter(Boolean))
+}
+
+function renderCausalInspector() {
+  const view = state.conversation
+  if (!view) return
+  const causal = view.causal || {}
+  $('#stateRevision').textContent = `State ${causal.state_revision || 0}`
+  $$('#inspectorTabs button').forEach(button => button.classList.toggle('active', button.dataset.inspectorTab === state.inspectorTab))
+  const body = clear($('#inspectorBody'))
+  if (state.inspectorTab === 'facts') {
+    const scene = view.journal?.current_scene
+    if (scene) body.append(inspectorSection('Current scene', el('div', { class: 'fact-tree' }, ...factRows(scene))))
+    if (Object.keys(causal.clocks || {}).length) body.append(inspectorSection('Clocks', el('div', { class: 'fact-tree' }, ...factRows(causal.clocks))))
+    if ((causal.known_facts || []).length) {
+      body.append(inspectorSection('Player-known facts', ...(causal.known_facts || []).slice(-20).map(item =>
+        el('div', { class: 'intent-row' }, el('strong', { text: typeof item === 'string' ? item : item.content || item.title || displayValue(item) })),
+      )))
+    }
+    if ((causal.recent_observations || []).length) {
+      body.append(inspectorSection('Observed', ...(causal.recent_observations || []).slice(-12).reverse().map(item =>
+        el('div', { class: 'intent-row' }, el('strong', { text: item.content }), el('small', { text: item.kind || 'observation' })),
+      )))
+    }
+  } else if (state.inspectorTab === 'actions') {
+    body.append(...(causal.recent_receipts || []).slice().reverse().map(receipt => el('article', { class: `receipt-card ${receipt.status === 'rejected' ? 'rejected' : ''}` },
+      el('strong', { text: `${receipt.status === 'rejected' ? 'Blocked' : 'Resolved'} · ${receipt.action_type || 'action'}` }),
+      el('small', { text: receipt.reason || receipt.outcome || `${receipt.changed_fact_count || 0} fact change(s)` }),
+    )))
+  } else if (state.inspectorTab === 'intent') {
+    body.append(...(causal.active_agendas || []).map(agenda => el('article', { class: 'intent-row' },
+      el('strong', { text: agenda.objective || agenda.id }),
+      el('small', { text: `${actorFor(agenda.owner_id).name} · priority ${agenda.priority ?? 50} · evaluated ${agenda.evaluation_count || 0} time(s)` }),
+    )))
+    const loop = causal.latest_loop
+    if (loop) body.append(inspectorSection('Control loop', el('div', { class: `receipt-card ${loop.status === 'suspended' ? 'rejected' : ''}` },
+      el('strong', { text: `${loop.status} · ${loop.phase}` }),
+      el('small', { text: `${loop.step_count || 0} durable step(s)` }),
+      loop.status === 'suspended' ? el('button', { class: 'secondary compact', text: 'Resume safely', on: { click: () => resumeControlLoop(loop.id) } }) : null,
+    )))
+  } else {
+    body.append(inspectorSection('Timelines', ...(view.branches || []).map(branch =>
+      el('div', { class: 'intent-row' }, el('strong', { text: branch.label }), el('small', { text: branch.id === view.conversation.current_branch_id ? 'Current timeline' : 'Alternative timeline' })),
+    )))
+    const manifest = causal.latest_loop?.context_manifests?.control
+    if (manifest) body.append(inspectorSection('Context assembly',
+      el('div', { class: 'fact-tree' },
+        el('div', { class: 'fact-row' }, el('span', { text: 'Policy' }), el('strong', { text: manifest.policy })),
+        el('div', { class: 'fact-row' }, el('span', { text: 'Whole blocks' }), el('strong', { text: `${manifest.included_count || 0} included · ${manifest.omitted_count || 0} omitted` })),
+        el('div', { class: 'fact-row' }, el('span', { text: 'Truncated blocks' }), el('strong', { text: String(manifest.truncated_blocks || 0) })),
+      ),
+    ))
+  }
+  if (!body.childNodes.length) body.append(el('div', { class: 'inspector-empty' }, el('p', { text: state.inspectorTab === 'intent' ? 'No public character intent is exposed yet. Private intent stays private.' : 'This view will fill as actions are resolved and consequences are observed.' })))
+}
+
+function showCausalPulse(receipt) {
+  const pulse = $('#causalPulse')
+  pulse.textContent = receipt.status === 'rejected' ? `Action blocked: ${receipt.reason || receipt.action_type}` : `Fact committed: ${receipt.action_type || receipt.outcome}`
+  pulse.classList.remove('hidden')
+  clearTimeout(showCausalPulse.timer)
+  showCausalPulse.timer = setTimeout(() => pulse.classList.add('hidden'), 4200)
+}
+
+function toggleCausalInspector() {
+  const inspector = $('#causalInspector')
+  const workspace = $('.story-workspace')
+  if (matchMedia('(max-width: 900px)').matches) {
+    inspector.classList.toggle('open')
+    return
+  }
+  state.inspectorOpen = !state.inspectorOpen
+  inspector.classList.toggle('collapsed', !state.inspectorOpen)
+  workspace.classList.toggle('inspector-hidden', !state.inspectorOpen)
+}
+
+async function resumeControlLoop(loopId) {
+  try {
+    state.streaming = true
+    $('#typing').classList.remove('hidden')
+    await api(`/api/control-loops/${encodeURIComponent(loopId)}/resume`, { method: 'POST', body: '{}' })
+    await refresh({ preserveView: false })
+    await openConversation(state.conversationId)
+    toast('The saved command completed.')
+  } catch (error) { toast(error.message, 7000) }
+  finally { state.streaming = false; $('#typing').classList.add('hidden') }
+}
+
 function applyQuickAction(action) {
   const input = $('#messageInput')
   if (action.id === 'continue') {
@@ -434,6 +576,7 @@ async function sendCurrentMessage() {
         state.conversation.messages.push({ event_id: `stream-${crypto.randomUUID()}`, role: 'assistant', actor_id: data.character_id, content: data.content, metadata: {}, created_at: new Date().toISOString() })
         renderMessages()
       }
+      if (event === 'action.receipt') showCausalPulse(data)
     } })
     await refresh({ preserveView: false })
     await openConversation(state.conversationId)
@@ -444,9 +587,7 @@ async function sendCurrentMessage() {
         ? t('invalidModelOutput')
         : error.message
     toast(message, 7000)
-    state.conversation.messages = state.conversation.messages.filter(message => message !== optimistic)
-    input.value = content
-    renderMessages()
+    await openConversation(state.conversationId)
   } finally {
     state.streaming = false
     $('#typing').classList.add('hidden')
@@ -589,7 +730,8 @@ async function openModelControlsDrawer(initialPresetId = '') {
     el('section', { class: 'control-section' },
       el('div', { class: 'control-section-heading' }, el('div', {}, el('p', { class: 'eyebrow', text: t('aiInput') }), el('h3', { text: t('modelReceives') }))),
       el('label', { class: 'field' }, el('span', { text: t('customInstructions') }), el('textarea', { name: 'custom_instructions', rows: 6, maxlength: 20000, value: conversation.prompt.custom_instructions, placeholder: getLocale() === 'zh' ? '例如：保持对白克制，场景描写简短。' : 'For example: Keep dialogue understated and use short scene descriptions.' }), el('small', { text: t('instructionHint') })),
-      el('label', { class: 'field' }, el('span', { text: t('historyMessages') }), el('input', { name: 'history_messages', type: 'number', min: 0, max: 200, step: 1, value: conversation.prompt.history_messages }), el('small', { text: t('historyHint') })),
+      el('label', { class: 'field' }, el('span', { text: t('historyMessages') }), el('input', { name: 'history_messages', type: 'number', min: 0, max: 10000, step: 1, value: conversation.prompt.history_messages ?? '', placeholder: localText('留空 = 全部历史', 'Blank = all history') }), el('small', { text: localText('留空时 Tavern 不设消息数量上限，由模型服务处理上下文。', 'Leave blank for no Tavern message-count ceiling; the model service manages its context.') })),
+      el('label', { class: 'field' }, el('span', { text: localText('显式上下文预算（可选）', 'Explicit context budget (optional)') }), el('input', { name: 'context_budget_tokens', type: 'number', min: 512, max: 10000000, step: 1, value: conversation.prompt.context_budget_tokens ?? '', placeholder: localText('留空 = 不设置', 'Blank = no Tavern ceiling') }), el('small', { text: localText('仅在你主动填写时启用；超预算时按完整信息块取舍，绝不截断文字。', 'Only active when you set it. Whole context blocks are selected; text is never cut mid-block.') })),
       el('div', { class: 'prompt-stack' },
         el('span', { text: getLocale() === 'zh' ? '核心规则 · 受保护' : 'Core rules · protected' }), el('span', { text: getLocale() === 'zh' ? '角色与故事' : 'Character & story' }), el('span', { text: getLocale() === 'zh' ? '记忆与状态' : 'Memory & state' }), el('span', { text: getLocale() === 'zh' ? '你的指令' : 'Your instructions' }), el('span', { text: getLocale() === 'zh' ? '聊天历史' : 'Chat history' }),
       ),
@@ -663,7 +805,8 @@ async function openModelControlsDrawer(initialPresetId = '') {
       },
       prompt: {
         custom_instructions: form.elements.custom_instructions.value,
-        history_messages: Number(form.elements.history_messages.value),
+        history_messages: form.elements.history_messages.value === '' ? null : Number(form.elements.history_messages.value),
+        context_budget_tokens: form.elements.context_budget_tokens.value === '' ? null : Number(form.elements.context_budget_tokens.value),
       },
     }
   }
@@ -692,7 +835,8 @@ async function openModelControlsDrawer(initialPresetId = '') {
       `${t('thinking')}: ${settings.thinking_intensity}`,
       `${t('temperature')}: ${settings.generation.temperature}`,
       `Top P: ${settings.generation.top_p}`,
-      `${t('historyMessages')}: ${settings.prompt.history_messages}`,
+      `${t('historyMessages')}: ${settings.prompt.history_messages ?? localText('全部', 'All')}`,
+      settings.prompt.context_budget_tokens ? localText(`上下文预算: ${settings.prompt.context_budget_tokens}`, `Context budget: ${settings.prompt.context_budget_tokens}`) : localText('无 Tavern 上下文硬上限', 'No Tavern context ceiling'),
       Object.keys(settings.generation.provider_options || {}).length ? localText(`${Object.keys(settings.generation.provider_options).length} 个专属参数`, `${Object.keys(settings.generation.provider_options).length} provider option(s)`) : null,
     ].filter(Boolean) : []
     const summaryNodes = [el('small', { class: 'control-status', text: preset?.description || t('choosePresetHint') })]
@@ -730,7 +874,7 @@ async function openModelControlsDrawer(initialPresetId = '') {
   const markCustom = () => { presetSelect.value = ''; updatePresetActions() }
   temperatureInput.addEventListener('input', () => { temperatureValue.textContent = Number(temperatureInput.value).toFixed(2).replace(/0+$/, '').replace(/\.$/, ''); markCustom() })
   topPInput.addEventListener('input', () => { topPValue.textContent = Number(topPInput.value).toFixed(2).replace(/0+$/, '').replace(/\.$/, ''); markCustom() })
-  const presetSettingNames = new Set(['thinking_intensity', 'response_length', 'initiative', 'pacing', 'frequency_penalty', 'presence_penalty', 'top_k', 'min_p', 'repetition_penalty', 'seed', 'stop_sequences', 'provider_options', 'custom_instructions', 'history_messages'])
+  const presetSettingNames = new Set(['thinking_intensity', 'response_length', 'initiative', 'pacing', 'frequency_penalty', 'presence_penalty', 'top_k', 'min_p', 'repetition_penalty', 'seed', 'stop_sequences', 'provider_options', 'custom_instructions', 'history_messages', 'context_budget_tokens'])
   form.addEventListener('input', event => { if (presetSettingNames.has(event.target.name)) markCustom() })
   connectionSelect.addEventListener('change', () => loadModels({ chooseDefault: true }))
   refreshModels.addEventListener('click', () => loadModels({ refresh: true }))
@@ -858,6 +1002,11 @@ function openChatMoreDrawer() {
     ...state.conversation.journal.timelines.map(timeline => el('div', { class: `timeline-row ${timeline.current ? 'current' : ''}` }, el('strong', { text: timeline.label }), timeline.current ? null : el('button', { class: 'secondary compact', text: t('switchTimeline'), on: { click: () => switchTimeline(timeline.id) } }))),
     el('button', { class: 'secondary', text: t('whatIf'), on: { click: () => createTimelineFrom(state.conversation.messages.at(-1)?.event_id ?? null) } }),
   )
+  const portability = el('section', { class: 'drawer-section' },
+    el('h3', { text: 'Portable playthrough' }),
+    el('p', { text: 'Download this Story, cast, causal facts and visible event history as one independent Tavern file. API credentials are excluded.' }),
+    el('button', { class: 'secondary', text: 'Export playthrough', on: { click: async () => downloadJson(await api(`/api/exports/conversations/${encodeURIComponent(conversation.id)}`), `${conversation.title}.playthrough.tavern.json`) } }),
+  )
   const danger = el('section', { class: 'drawer-section danger-zone' },
     el('h3', { text: 'Conversation' }),
     el('p', { text: 'Deleting removes this conversation, its timelines, messages, and usage history.' }),
@@ -872,7 +1021,7 @@ function openChatMoreDrawer() {
       toast('Conversation deleted')
     } } }),
   )
-  const body = el('div', {}, timelines, danger)
+  const body = el('div', {}, timelines, portability, danger)
   openDrawer(t('more'), body)
 }
 
@@ -1253,6 +1402,7 @@ async function openShare(entityType, entityId, title) {
       el('div', { class: 'profile-actions' },
         typeof navigator.share === 'function' ? el('button', { text: 'Share from this device', on: { click: () => navigator.share({ title, text: values.scope === 'remix' ? `Open or remix “${title}” in Harness Tavern.` : `Preview “${title}” in Harness Tavern.`, url: link.url }).catch(error => { if (error.name !== 'AbortError') toast(error.message) }) } }) : null,
         el('button', { class: 'secondary', text: 'Download portable Tavern pack', on: { click: portable } }),
+        entityType === 'story' ? el('button', { class: 'secondary', text: 'Download editable Story source', on: { click: async () => downloadJson(await api(`/api/exports/stories/${entityId}?format=source`), `${title}.story.tavern.json`) } }) : null,
         entityType === 'character' ? el('button', { class: 'secondary', text: 'Download SillyTavern V2 card', on: { click: async () => downloadJson(await api(`/api/exports/characters/${entityId}?format=sillytavern-v2`), `${title}.character.json`) } }) : null,
       ),
       el('p', { class: 'microcopy', text: 'The portable file works between independent Tavern installations. A link works while this Tavern server is reachable.' }),
@@ -1327,8 +1477,18 @@ function openImportDialog(content = '') {
   const form = el('form', { class: 'friendly-form' },
     el('button', { type: 'button', class: 'file-drop', on: { click: () => $('#importFile').click() } },
       el('span', { class: 'choice-icon', text: '⇧' }),
-      el('strong', { text: t('chooseFile') }),
-      el('small', { text: 'Tavern story packs and SillyTavern Character Card JSON are supported.' }),
+      el('strong', { text: 'Choose one editable file' }),
+      el('small', { text: 'Tavern packs, playthroughs, backups, Story source, and SillyTavern JSON/PNG/CHARX/ZIP are supported.' }),
+    ),
+    el('button', { type: 'button', class: 'file-drop secondary-project-drop', on: { click: () => $('#storyProjectFiles').click() } },
+      el('span', { class: 'choice-icon', text: '▦' }),
+      el('strong', { text: 'Choose a Story project folder' }),
+      el('small', { text: 'Imports story.tavern.json together with relative Character, Lorebook and Markdown scene files.' }),
+    ),
+    el('button', { type: 'button', class: 'file-drop secondary-project-drop', on: { click: () => $('#sillyTavernFiles').click() } },
+      el('span', { class: 'choice-icon', text: '↬' }),
+      el('strong', { text: 'Migrate a SillyTavern data folder' }),
+      el('small', { text: 'Previews Characters, Chats, Group Chats, Groups, Worlds, Personas and presets before importing. secrets.json is always excluded.' }),
     ),
     el('details', { class: 'advanced-details' },
       el('summary', { text: 'Paste shared text instead' }),
@@ -1358,10 +1518,71 @@ async function previewImport(content) {
   openModal(t('previewImport'), body)
 }
 
+async function storyProjectBundle(fileList) {
+  const files = {}
+  for (const file of fileList) files[file.webkitRelativePath || file.name] = await file.text()
+  const manifests = Object.keys(files).filter(path => path.endsWith('/story.tavern.json') || path === 'story.tavern.json' || path.endsWith('.story.tavern.json'))
+  if (manifests.length !== 1) throw new Error('Choose one Story project folder containing exactly one story.tavern.json manifest.')
+  return { format: 'harness-tavern-story-project-files', manifest_path: manifests[0], files }
+}
+
 async function applyImport(strategy) {
-  await api('/api/import/apply', { method: 'POST', body: JSON.stringify({ content: state.importContent, strategy, source_name: 'Tavern UI import' }) })
+  const imported = await api('/api/import/apply', { method: 'POST', body: JSON.stringify({ content: state.importContent, strategy, source_name: 'Tavern UI import' }) })
   state.importContent = null
-  closeModal(); await refresh(); showView('library'); toast(t('imported'))
+  closeModal(); await refresh(); showView('library')
+  const warningCount = imported.result?.source_sync_warnings?.length ?? 0
+  toast(warningCount
+    ? localText(`已导入，但有 ${warningCount} 个可编辑源文件需要修复；请运行 doctor。`, `Imported, but ${warningCount} editable source file(s) need repair; run doctor.`)
+    : t('imported'))
+}
+
+function fileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`))
+    reader.onload = () => resolve(String(reader.result).split(',').at(-1))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function sillyTavernPayload(files, sourceName) {
+  const entries = []
+  for (const file of files) {
+    const path = file.webkitRelativePath || file.name
+    const binary = /\.(png|charx|zip|webp|jpe?g|gif|mp3|mp4|wav|ogg)$/i.test(path)
+    entries.push(binary ? { path, base64: await fileBase64(file) } : { path, text: await file.text() })
+  }
+  return { source_name: sourceName, files: entries }
+}
+
+async function previewSillyTavernMigration(payload) {
+  const session = await api('/api/migrations/sillytavern/preview', { method: 'POST', body: JSON.stringify(payload) })
+  state.migrationId = session.id
+  const counts = session.inventory.counts
+  const body = el('div', {},
+    el('div', { class: 'import-preview' },
+      el('p', { class: 'eyebrow', text: 'Migration preview · nothing changed yet' }),
+      el('h3', { text: session.source_name }),
+      el('p', { text: `${counts.characters} characters · ${counts.worlds} worlds · ${counts.groups} groups · ${counts.chats} chats · ${counts.personas} Personas · ${counts.presets} presets` }),
+      ...(session.warnings || []).map(message => el('p', { class: 'compatibility-warning', text: message })),
+      counts.passive_items ? el('p', { class: 'microcopy', text: `${counts.passive_items} theme, extension, Quick Reply, asset or vector item(s) were inventoried without executing code.` }) : null,
+    ),
+    el('div', { class: 'profile-actions' },
+      el('button', { text: 'Create migrated copies', on: { click: () => applySillyTavernMigration('copy') } }),
+      el('button', { class: 'secondary', text: 'Replace matching library items', on: { click: () => applySillyTavernMigration('replace') } }),
+    ),
+  )
+  openModal('Review SillyTavern migration', body, { wide: true, autoFocus: false })
+}
+
+async function applySillyTavernMigration(strategy) {
+  const result = await api(`/api/migrations/sillytavern/${encodeURIComponent(state.migrationId)}/apply`, { method: 'POST', body: JSON.stringify({ strategy }) })
+  state.migrationId = null
+  closeModal()
+  await refresh()
+  showView('library')
+  const counts = result.inventory.counts
+  toast(`Migration complete: ${counts.characters} characters, ${counts.groups + counts.worlds} Stories and ${result.result.conversations?.length || 0} chats.`, 7000)
 }
 
 function openProviderForm() {
@@ -1608,7 +1829,32 @@ function wireEvents() {
   $('#messageInput').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(200, event.target.scrollHeight)}px` })
   $('#profileForm').addEventListener('submit', async event => { event.preventDefault(); await api('/api/user-profile', { method: 'PATCH', body: JSON.stringify(formObject(event.currentTarget)) }); await refresh(); toast(t('saved')) })
   $('#connectOpenRouter').addEventListener('click', async () => { const result = await api('/api/account-connections/openrouter-oauth/begin', { method: 'POST', body: '{}' }); location.href = result.authorization_url })
-  $('#importFile').addEventListener('change', async event => { const file = event.target.files[0]; if (!file) return; const text = await file.text(); event.target.value = ''; await previewImport(text) })
+  $('#importFile').addEventListener('change', async event => {
+    const file = event.target.files[0]
+    if (!file) return
+    try {
+      if (/\.(png|charx|zip|jsonl)$/i.test(file.name) || file.name.toLocaleLowerCase() === 'settings.json') {
+        await previewSillyTavernMigration({ source_name: file.name, filename: file.name, data_base64: await fileBase64(file) })
+      } else await previewImport(await file.text())
+    } finally { event.target.value = '' }
+  })
+  $('#storyProjectFiles').addEventListener('change', async event => {
+    const files = [...event.target.files]
+    if (!files.length) return
+    try { await previewImport(await storyProjectBundle(files)) } finally { event.target.value = '' }
+  })
+  $('#sillyTavernFiles').addEventListener('change', async event => {
+    const files = [...event.target.files]
+    if (!files.length) return
+    try { await previewSillyTavernMigration(await sillyTavernPayload(files, files[0].webkitRelativePath.split('/')[0] || 'SillyTavern data')) }
+    finally { event.target.value = '' }
+  })
+  $('#inspectorTabs').addEventListener('click', event => {
+    const button = event.target.closest('[data-inspector-tab]')
+    if (!button) return
+    state.inspectorTab = button.dataset.inspectorTab
+    renderCausalInspector()
+  })
   $('#modalLayer').addEventListener('click', event => { if (event.target === $('#modalLayer')) closeModal() })
   document.addEventListener('keydown', event => { if (event.key === 'Escape') { closeModal(); closeDrawer(); closeMobileNav() } })
   document.addEventListener('click', event => {
@@ -1624,6 +1870,7 @@ function wireEvents() {
       'new-chat': () => { state.libraryTab = 'characters'; showView('library') },
       'open-import': () => openImportDialog(),
       'export-library': async () => downloadJson(await api('/api/exports/library'), 'my-tavern-library.tavern.json'),
+      'export-backup': async () => downloadJson(await api('/api/exports/backup'), 'harness-tavern-backup.tavern.json'),
       'manage-shares': () => openShareManager(),
       'add-provider': openProviderForm,
       'install-extension': installExtensionDialog,
@@ -1632,6 +1879,7 @@ function wireEvents() {
       'open-journal': openJournalDrawer,
       'open-model-controls': openModelControlsDrawer,
       'open-chat-more': openChatMoreDrawer,
+      'toggle-causal-inspector': toggleCausalInspector,
       'close-modal': closeModal,
       'close-drawer': closeDrawer,
     }

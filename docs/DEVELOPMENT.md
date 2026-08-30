@@ -7,7 +7,7 @@
 - Git
 - Docker with Compose, only for container validation
 
-The application has no third-party runtime packages. `npm ci` still validates the lockfile and makes CI behavior reproducible.
+The runtime dependency set is intentionally small. Ajv validates the checked-in JSON Schema 2020-12 Story contracts. `npm ci` installs the exact lockfile used by CI.
 
 ## First checkout
 
@@ -31,6 +31,9 @@ The default server listens on `http://127.0.0.1:8787`. Runtime data is stored ou
 | `npm run test:coverage` | Run source coverage with enforced thresholds |
 | `npm run verify:journey` | Exercise the fresh-user HTTP journey |
 | `npm run doctor` | Check the configured database and inventory |
+| `npm run story:validate -- <path>` | Validate one editable Story file or project |
+| `npm run story:import -- <path>` | Link and compile an editable Story source |
+| `npm run story:export -- <story> <path> [--project]` | Export one file or a multi-file Story project |
 | `npm run verify` | Run the local merge gate |
 | `npm run release` | Build and cold-test release artifacts from the current commit |
 
@@ -46,6 +49,7 @@ Never place provider keys in repository files. Provider credentials entered thro
 - `runtime/` owns context construction, model envelopes, operations, and atomic turn commits.
 - `providers/` translates the portable request into provider-specific protocols.
 - `sharing/` owns sanitized public projections and portable content boundaries.
+- `story/` owns editable Story schemas, resource resolution, source bindings and compilation.
 - `server/` is the HTTP transport; it should not become the domain layer.
 - `public/` is a dependency-free browser client using friendly product concepts.
 

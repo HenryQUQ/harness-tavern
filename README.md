@@ -5,9 +5,9 @@
 
 [中文说明](README.zh-CN.md)
 
-Harness Tavern is a **Tavern-first** application for persistent character chat and roleplay. The user experience is built around meeting characters, continuing relationships, entering stories, and creating shareable worlds. Harness concepts—events, state transactions, model routing, private knowledge, and replay—stay behind the scenes.
+Harness Tavern is a **Tavern-first causal story engine** for persistent character roleplay. Chat is a narrative view, not the system of record: durable State, a resumable Control Loop, declarative Actions, actor-scoped Observations, persistent Intent, and replayable Events determine what actually happened.
 
-Version: **0.12.0**
+Version: **0.13.0**
 
 ## Start in one command
 
@@ -26,6 +26,8 @@ A built-in offline demo model, a default player Persona, three characters, and t
 - **Tavern language, not infrastructure language.** Primary navigation is Home, Chats, Library, Create, and Settings.
 - **Progressive disclosure.** AI connections, routing, response depth, usage, and creator-only state are available, but never block the first experience.
 - **The player owns the player.** The runtime does not invent the user’s dialogue, thoughts, feelings, identity, or successful actions.
+- **Prose does not create facts.** Models propose intent; authored Action rules validate preconditions and commit effects before narration is rendered. Contradictory drafts are discarded, corrected, or replaced by verified Observations.
+- **Intent persists until facts end it.** Character Actions require an owned active Agenda, and only authored state conditions can complete, fail, pause, or resume one.
 - **Private knowledge stays private.** Player Journal, public share previews, and creator inspection use separate projections.
 - **Share before platform lock-in.** Characters and stories can move as versioned Tavern packs or portable share links.
 - **Extend without executing strangers’ code.** Imported extensions are declarative templates, quick actions, and themes.
@@ -61,7 +63,7 @@ A Story is reusable content. Starting it creates a Playthrough, and each Playthr
 
 ### Player Journal
 
-The Journal translates runtime state into player language:
+The Journal and Story Engine inspector translate runtime state into player language:
 
 - current scene;
 - recap;
@@ -70,6 +72,9 @@ The Journal translates runtime state into player language:
 - relationship descriptions;
 - visible world state;
 - timelines.
+- resolved or rejected Action receipts;
+- public persistent character Intent;
+- context assembly policy and state revision.
 
 It deliberately omits Director-only lore and private character knowledge.
 
@@ -101,7 +106,13 @@ A creator can save an existing Story as a declarative Story Template. The templa
 
 ## Sharing
 
-Harness Tavern supports three sharing levels.
+Harness Tavern separates editable source from distribution and public preview.
+
+### Editable Story source
+
+Every published single-character, multi-character, or narrator-only Story has a canonical `harness-tavern-story/v2` source. A compact Story is one self-contained `*.story.tavern.json` file. A larger Story can use `story.tavern.json` plus relative Character Card, Lorebook, Markdown scene, declarative Action, and persistent Agenda files. These files use stable keys rather than database IDs and can be edited directly, validated, versioned in Git and recompiled into SQLite.
+
+See [Editable Story sources](docs/STORY_SOURCES.md) and the [checked-in project example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
 
 ### Public preview
 
@@ -109,7 +120,7 @@ A revocable browser page containing only player-safe material: title, hook, publ
 
 ### Playable Tavern pack
 
-A versioned `.tavernpack.json` file containing the Story and required Characters. It includes creator-only knowledge required by the runtime, so it should be shared as editable source content rather than mistaken for a public preview.
+A versioned `.tavernpack.json` distribution snapshot containing the Story and required Characters. Its SHA-256 integrity digest detects accidental or deliberate modification; it is not a creator identity signature. Portable playthrough packs also preserve the causal event stream, while a full backup includes the local library and conversations but never credentials.
 
 ### Portable link
 
@@ -121,7 +132,7 @@ Import always supports a preview step and explicit conflict strategy:
 - **Replace**: update matching local content;
 - **Skip**: reuse matching local content.
 
-SillyTavern Character Card V2-style JSON is accepted through the same preview/import flow.
+SillyTavern Character Card V2/V3 JSON, PNG and CHARX are accepted. A preview-first full migration can scan a SillyTavern user-data folder or ZIP and migrate Characters, Chats, Group Chats, Groups, World Info, Personas and compatible generation presets. `secrets.json` is always excluded; extensions, Quick Replies and vector indexes are inventoried but never executed or trusted as portable state.
 
 ## Safe extensions
 
@@ -146,9 +157,9 @@ The application works without an external provider. Under **Settings → AI Conn
 - local Ollama, LM Studio, vLLM, llama.cpp, and LocalAI connections;
 - more than thirty provider presets.
 
-The chat header shows the active AI service and model. Open it to switch connected APIs, refresh or type a model ID, apply the built-in Balanced, Cinematic, or Focused response preset, edit conversation-specific AI instructions and context history, tune reasoning strength, response behaviour, temperature, Top P, Top K, Min P, frequency/presence/repetition penalties, seed and stop sequences, or add bounded provider-specific JSON options. Every setting—including reasoning strength—can be saved in or used to update a reusable custom preset.
+The chat header shows the active AI service and model. Open it to switch connected APIs, refresh or type a model ID, apply the built-in Balanced, Cinematic, or Focused response preset, edit conversation-specific AI instructions and context history, tune reasoning strength, response behaviour, temperature, Top P, Top K, Min P, frequency/presence/repetition penalties, seed and stop sequences, or add bounded provider-specific JSON options. Every setting—including reasoning strength—can be saved in or used to update a reusable custom preset. History and context-budget fields are nullable: by default Tavern imposes no context ceiling; an explicitly chosen budget omits only complete context blocks and never cuts text mid-block.
 
-SillyTavern Chat Completion and Text Completion preset JSON files can be imported from the same preset section. Tavern previews the exact mapping first, translates enabled prompt blocks into conversation instructions, preserves compatible samplers and reasoning effort, and identifies fields it will not import. API/model credentials and output-token caps are intentionally excluded. Response length remains a writing-style instruction rather than an artificial token ceiling: Harness Tavern leaves output capacity to the selected provider and rejects incomplete structured replies instead of displaying truncated data.
+SillyTavern Chat Completion and Text Completion preset JSON files can be imported from the same preset section. Tavern previews the exact mapping first, translates enabled prompt blocks into conversation instructions, preserves compatible samplers and reasoning effort, and identifies fields it will not import. API/model credentials and output-token caps are intentionally excluded. Response length remains a writing-style instruction rather than an artificial token ceiling: Harness Tavern leaves output capacity to the selected provider, persists complete narration without a character-count slice, and suspends incomplete replies instead of displaying truncated data.
 
 Characters, stories, and the offline demo connection are seeded, but a demo conversation is no longer created automatically. Once a real API is connected, new conversations prefer it; the built-in Mock remains an offline fallback only when no other enabled connection exists.
 
@@ -160,13 +171,13 @@ API keys are encrypted at rest. Consumer website subscriptions are not treated a
 Player / Creator surfaces
         ↓
 Human-facing application services
-(Home, Journal, Guided Creator, Sharing, Extensions)
+(Home, Journal, Story Engine inspector, Guided Creator, Sharing, Migration)
         ↓
 Tavern domain
 (Character, Persona, Story, Playthrough, Timeline, Cast)
         ↓
-Unified turn runtime
-(Context → model → validated envelope → state transaction)
+Durable causal runtime
+(Command → Control Plan → Action resolution → Observation → Narration)
         ↓
 Append-only events + deterministic projections + SQLite
 ```
@@ -179,6 +190,7 @@ See:
 - [Sharing and extensions](docs/SHARING_AND_EXTENSIONS.md)
 - [Creator guide](docs/CREATOR_GUIDE.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Editable Story sources](docs/STORY_SOURCES.md)
 - [API](docs/API.md)
 - [Security](docs/SECURITY.md)
 - [Migration](docs/MIGRATION.md)
@@ -193,6 +205,7 @@ npm run check
 npm run test:coverage
 npm run verify:journey
 npm run doctor
+npm run story:validate -- examples/stories/midnight-at-the-glass-observatory
 npm run release
 ```
 
@@ -211,4 +224,4 @@ See [Operations](docs/OPERATIONS.md) before exposing the service through a rever
 
 ## Deployment boundary
 
-0.12.0 is a local-first, single-owner beta suitable for real roleplay, story creation, sharing, evaluation, and continued product development. It is not presented as an independently security-audited, multi-tenant hosted service. Multi-user RBAC, billing, central moderation, distributed persistence, native mobile clients, and a hosted marketplace remain outside this release.
+This release is a local-first, single-owner beta suitable for real roleplay, story creation, sharing, migration, evaluation, and continued product development. It is not presented as an independently security-audited, multi-tenant hosted service. Multi-user RBAC, billing, central moderation, distributed persistence, native mobile clients, and a hosted marketplace remain outside this release.

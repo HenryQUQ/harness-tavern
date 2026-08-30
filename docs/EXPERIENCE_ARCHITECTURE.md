@@ -1,6 +1,6 @@
 # Experience Architecture
 
-Harness Tavern 0.12.0 is designed from the user’s intention outward, not from database entities or model infrastructure inward.
+Harness Tavern is designed from the user’s intention outward, not from database entities or model infrastructure inward.
 
 ## Experience promise
 
@@ -15,7 +15,7 @@ Character · Story · Persona · Playthrough · Timeline · Journal · Share
 The following remain implementation concepts:
 
 ```text
-Provider · routing · event projection · state operation · context budget · tool envelope
+Provider · routing · event projection · Action resolution · context assembly · Control Plan
 ```
 
 ## Surfaces
@@ -29,6 +29,8 @@ Primary navigation:
 - **Library** — characters, stories, and Personas;
 - **Create** — plain-language character and story creation;
 - **Settings** — profile, AI connections, sharing, extensions, appearance, and advanced options.
+
+Inside a Story, prose remains the visual focus. A persistent causal inspector beside it has four compact views: player-known Facts, visible Action receipts, public Intent, and Timeline/context diagnostics. It collapses to a drawer on small screens.
 
 ### Creator surface
 
@@ -97,7 +99,11 @@ A branch inside a Playthrough. A new timeline can inherit history up to an event
 
 ### Conversation
 
-The active message and event stream. Character-only chats use the same runtime without requiring a Story.
+The player-facing narrative projection of an append-only event stream. Character-only chats use the same runtime without requiring a Story. Conversation text is never the authoritative world state.
+
+### Control Loop
+
+One durable command moves through interpretation, deterministic Action resolution, actor-scoped Observation and narration. Provider failure suspends the loop at its current phase; resume does not duplicate already committed effects.
 
 ## Journal projection
 
@@ -107,6 +113,7 @@ The Player Journal is not a direct serialization of state. It is a purpose-built
 - shows only player-visible lore and memories;
 - removes keys associated with private, hidden, Director, or internal state;
 - summarizes recent events;
+- shows player-visible Action results without exposing internal effect paths;
 - presents named timelines instead of branch identifiers.
 
 The Creator Inspector uses a separate endpoint and authorization boundary.
@@ -130,7 +137,10 @@ Automated tests protect the following product rules:
 - default response depth is Automatic;
 - raw JSON state is not a primary player action;
 - public shares omit private and Director-only content;
+- player APIs omit effect paths, private Agendas and raw Control Plans;
+- impossible Actions produce visible rejection receipts without changing facts;
+- provider failures preserve Commands for idempotent resume;
 - import always supports preview before mutation;
 - every generated Story draft gives each cast member distinct private context;
 - declarative extensions cannot contain executable fields;
-- the bundled sample is a real three-character Playthrough, not a static mockup.
+- the bundled sample is an editable Story v2 project with typed Actions and persistent Agendas, not a static mockup.
