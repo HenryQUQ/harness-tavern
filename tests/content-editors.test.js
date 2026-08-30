@@ -212,7 +212,7 @@ await test('Library profiles expose responsive complete Character and Story work
   assert.match(browser, /openStoryEditor\(story\.id\)/)
   assert.match(browser, /\/api\/creator\/characters\/\$\{encodeURIComponent\(characterId\)\}/)
   assert.match(browser, /\/api\/creator\/stories\/\$\{encodeURIComponent\(storyId\)\}/)
-  for (const section of ['Identity', 'Intent & privacy', 'Cast', 'World & lore', 'Scenes', 'Causality', 'Advanced']) assert.match(browser, new RegExp(section.replace(/[&]/g, '\\&')))
+  for (const section of ['Identity', 'Intent & privacy', 'Cast', 'World & lore', 'Scenes', 'Causality', 'Advanced']) assert.ok(browser.includes(section))
   assert.match(styles, /\.modal-workspace/)
   assert.match(styles, /@media \(max-width: 720px\)/)
   assert.match(browser, /role: 'tablist'/)
