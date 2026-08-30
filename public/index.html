@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#17131d">
+  <meta name="theme-color" content="#0b0b0c">
   <meta name="description" content="A framework for persistent characters, causal stories, portable content, and model-independent play.">
   <title>Harness Tavern</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=0.13.0-chat-workspace">
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -43,9 +43,23 @@
         <section class="content-section"><div class="section-heading"><div><h2 data-i18n="storiesToEnter">Stories to enter</h2></div><button class="text-button" data-action="view-stories" data-i18n="stories">Stories</button></div><div id="homeStoryGrid" class="card-grid horizontal"></div></section>
       </section>
 
-      <section id="view-chats" class="view page-view" aria-labelledby="chatsTitle">
-        <div class="page-heading"><div><p class="eyebrow" data-i18n="chats">Chats</p><h1 id="chatsTitle">Your ongoing conversations</h1><p>Continue relationships and playthroughs without losing their history.</p></div><button data-action="new-chat">New chat</button></div>
-        <div id="chatGrid" class="conversation-grid"></div>
+      <aside id="conversationRail" class="conversation-rail" aria-label="Conversations">
+        <div class="conversation-rail-heading">
+          <div><small data-i18n="chats">Chats</small><h2 data-i18n="conversations">Conversations</h2></div>
+          <button class="rail-new-chat" data-action="new-chat" aria-label="New chat" title="New chat">＋</button>
+        </div>
+        <label class="conversation-search"><span aria-hidden="true">⌕</span><input id="conversationSearch" type="search" data-i18n-placeholder="searchChats" placeholder="Search chats" autocomplete="off"></label>
+        <div id="conversationGroups" class="conversation-groups"></div>
+        <footer class="conversation-rail-footer"><button data-action="open-library"><span aria-hidden="true">◇</span><span data-i18n="charactersStories">Characters & stories</span><span aria-hidden="true">→</span></button></footer>
+      </aside>
+
+      <section id="view-chats" class="view chats-workspace" aria-labelledby="chatsTitle">
+        <div class="chat-welcome">
+          <span class="welcome-mark" aria-hidden="true">HT</span>
+          <h1 id="chatsTitle" data-i18n="continueConversation">Continue a conversation</h1>
+          <p data-i18n="continueConversationHint">Choose a character or story on the left. Every chat keeps its own model, preset, facts, and history.</p>
+          <div class="chat-welcome-actions"><button data-action="new-chat" data-i18n="newChat">New chat</button><button class="secondary" data-action="open-library" data-i18n="openLibrary">Open library</button></div>
+        </div>
       </section>
 
       <section id="view-library" class="view page-view" aria-labelledby="libraryTitle">
@@ -64,7 +78,7 @@
       </section>
 
       <section id="view-chat" class="view chat-view" aria-labelledby="activeChatTitle">
-        <header class="chat-header"><button class="icon-button" data-action="leave-chat" aria-label="Back">←</button><div id="chatCastAvatars" class="avatar-stack"></div><div class="chat-heading"><h1 id="activeChatTitle">Conversation</h1><p id="activeChatScene"></p></div><button id="chatModelSwitch" class="model-switch" data-action="open-model-controls" aria-label="Change AI service, model, and response preset"><span class="model-status-dot"></span><span class="model-switch-copy"><strong id="activeProviderName">AI service</strong><small id="activeModelName">Choose a model</small></span><span class="model-switch-chevron" aria-hidden="true">⌄</span></button><div class="chat-header-actions"><button class="secondary compact" data-action="toggle-causal-inspector">Facts</button><button class="secondary compact" data-action="open-cast" data-i18n="cast">Cast</button><button class="secondary compact" data-action="open-journal" data-i18n="journal">Journal</button><button class="icon-button" data-action="open-chat-more" aria-label="More">•••</button></div></header>
+        <div class="chat-session"><header class="chat-header"><button class="icon-button chat-back" data-action="leave-chat" aria-label="Back">←</button><div id="chatCastAvatars" class="avatar-stack"></div><div class="chat-heading"><h1 id="activeChatTitle">Conversation</h1><p id="activeChatScene"></p></div><button id="chatModelSwitch" class="model-switch" data-action="open-model-controls" aria-label="Change AI service, model, and response preset"><span class="model-status-dot"></span><span class="model-switch-copy"><strong id="activeProviderName">AI service</strong><small id="activeModelName">Choose a model</small></span><span class="model-switch-chevron" aria-hidden="true">⌄</span></button><div class="chat-header-actions"><button class="secondary compact" data-action="toggle-causal-inspector">Facts</button><button class="secondary compact" data-action="open-cast" data-i18n="cast">Cast</button><button class="secondary compact" data-action="open-journal" data-i18n="journal">Journal</button><button class="icon-button" data-action="open-chat-more" aria-label="More">•••</button></div></header>
         <div class="story-workspace">
           <main class="story-stage">
             <div id="messageList" class="message-list" aria-live="polite"></div>
@@ -78,7 +92,7 @@
             <nav id="inspectorTabs" class="inspector-tabs" aria-label="Story engine views"><button class="active" data-inspector-tab="facts">Facts</button><button data-inspector-tab="actions">Actions</button><button data-inspector-tab="intent">Intent</button><button data-inspector-tab="timeline">Timeline</button></nav>
             <div id="inspectorBody" class="inspector-body"></div>
           </aside>
-        </div>
+        </div></div>
       </section>
     </main>
 
@@ -91,6 +105,6 @@
     <input id="sillyTavernFiles" type="file" webkitdirectory directory multiple hidden>
     <div id="toast" class="toast hidden" role="status"></div>
   </div>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=0.13.0-chat-workspace"></script>
 </body>
 </html>

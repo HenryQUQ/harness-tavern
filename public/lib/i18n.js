@@ -1,6 +1,6 @@
 const translations = {
   en: {
-    home: 'Home', chats: 'Chats', library: 'Library', settings: 'Settings',
+    home: 'Home', chats: 'Chats', library: 'Library', settings: 'Settings', conversations: 'Conversations', newChat: 'New chat', searchChats: 'Search chats', charactersStories: 'Characters & stories', continueConversation: 'Continue a conversation', continueConversationHint: 'Choose a character or story on the left. Every chat keeps its own model, preset, facts, and history.',
     continue: 'Continue', continueJourney: 'Continue your journey', charactersWaiting: 'Characters waiting for you', storiesToEnter: 'Stories to enter',
     noRecent: 'Your conversations will appear here.', startChat: 'Start chat', continueChat: 'Continue chat', beginStory: 'Begin story', newPlaythrough: 'Start a new story',
     characters: 'Characters', stories: 'Stories', personas: 'Personas', allChats: 'All conversations',
@@ -18,7 +18,7 @@ const translations = {
     copied: 'Copied', saved: 'Saved', created: 'Created', imported: 'Imported', error: 'Something went wrong', close: 'Close', back: 'Back', open: 'Open',
   },
   zh: {
-    home: '首页', chats: '对话', library: '内容库', settings: '设置',
+    home: '首页', chats: '对话', library: '内容库', settings: '设置', conversations: '全部对话', newChat: '新对话', searchChats: '搜索对话', charactersStories: '角色与故事', continueConversation: '继续一段对话', continueConversationHint: '从左侧选择角色或故事。每段对话都有独立的模型、预设、事实和历史。',
     continue: '继续', continueJourney: '继续你的故事', charactersWaiting: '等你回来的角色', storiesToEnter: '可以进入的故事',
     noRecent: '你的对话会出现在这里。', startChat: '开始聊天', continueChat: '继续聊天', beginStory: '进入故事', newPlaythrough: '开始新存档',
     characters: '角色', stories: '故事', personas: '我的身份', allChats: '全部对话',

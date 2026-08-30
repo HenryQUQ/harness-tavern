@@ -12,6 +12,20 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | GET | `/api/user-profile` | Local owner profile and onboarding state |
 | PATCH | `/api/user-profile` | Name, locale, default Persona, onboarding |
 
+Each item in `GET /api/bootstrap` → `conversations` includes a player-safe `group` summary used by the Chats rail:
+
+```json
+{
+  "kind": "character",
+  "id": "character-or-ensemble-identity",
+  "title": "Visible group name",
+  "subtitle": "Character chat",
+  "cast": [{ "id": "character-id", "name": "Visible name", "avatar_url": "" }]
+}
+```
+
+`kind` is `character` or `story`. Story summaries use the Story identity and may include `cover_url`; no private Cast context, private Lore, or creator-only state is included.
+
 ## Library content framework
 
 | Method | Path | Purpose |

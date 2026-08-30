@@ -256,6 +256,38 @@ function playerHome(app) {
   }
 }
 
+function playerConversationListItem(app, conversation) {
+  const cast = app.repository.listConversationCast(conversation.id)
+  const story = conversation.story_id ? app.repository.getStory(conversation.story_id) : null
+  const publicCast = cast.map(member => ({
+    id: member.character_id,
+    name: member.character.name,
+    avatar_url: member.character.avatar_url,
+  }))
+  const characterGroupId = publicCast.length === 1
+    ? publicCast[0].id
+    : `ensemble:${publicCast.map(member => member.id).join(':') || 'general'}`
+
+  return {
+    ...conversation,
+    group: story ? {
+      kind: 'story',
+      id: story.id,
+      title: story.title,
+      subtitle: story.hook || story.summary || story.genre || '',
+      cover_url: story.cover_url,
+      cast: publicCast,
+    } : {
+      kind: 'character',
+      id: characterGroupId,
+      title: publicCast.map(member => member.name).join(', ') || 'General',
+      subtitle: publicCast.length > 1 ? 'Ensemble chat' : 'Character chat',
+      avatar_url: publicCast.length === 1 ? publicCast[0].avatar_url : '',
+      cast: publicCast,
+    },
+  }
+}
+
 function publicBootstrap(app) {
   return {
     version: PRODUCT_VERSION,
@@ -297,7 +329,7 @@ function publicBootstrap(app) {
     personas: app.repository.listPersonas(),
     stories: app.repository.listStories().map(story => playerStory(story, app.repository.listPlaythroughs(story.id))),
     playthroughs: app.repository.listPlaythroughs(),
-    conversations: app.repository.listConversations(),
+    conversations: app.repository.listConversations().map(conversation => playerConversationListItem(app, conversation)),
     sample: {
       story_id: 'story_glass_observatory',
       conversation_id: app.db.raw.prepare('SELECT id FROM conversations WHERE id = ?').get('conv_glass_observatory_test')?.id ?? null,

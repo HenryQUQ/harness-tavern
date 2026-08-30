@@ -33,6 +33,8 @@ There is no separate core **Create** product. Adding an item is a Library operat
 
 Inside a Story, prose remains the visual focus. A causal inspector beside it exposes player-safe Facts, visible Action receipts, public Intent, and Timeline/context diagnostics. It collapses to a drawer on small screens.
 
+Chats use one continuous workspace rather than a gallery of unrelated cards. A compact rail groups every Conversation first by **Character** or **Story**, then by the specific Character, ensemble, or Story identity. The same rail remains available while a desktop Conversation is open, so switching context never requires returning to a separate index. On small screens the rail becomes the complete Chats view and yields the screen to the active Conversation.
+
 ### Authoring surface
 
 Authoring begins from an existing Library item or **Library → New**. Advanced private information is never mixed into the player Journal.
@@ -78,6 +80,8 @@ The onboarding setting is stored server-side, while the chosen language follows 
 - response length;
 - Character initiative;
 - model selection and provider-compatible sampling controls.
+
+The per-Conversation AI panel follows progressive disclosure. Response preset, thinking strength, response length, initiative, and group pacing are always visible together. Connection/model choice, model input assembly, sampling, and provider-specific overrides remain in labeled disclosure rows. Saving applies the complete form to the next reply without changing the causal runtime type.
 
 ### Author-only layer
 
@@ -144,6 +148,9 @@ The author inspector uses a separate endpoint and authorization boundary.
 Automated tests protect these rules:
 
 - primary navigation contains no Create, Models, Provider, State, or Agent Mode destination;
+- every Conversation bootstrap summary carries a public Character/Story grouping identity without private Cast context;
+- the Chats rail groups Character and Story Conversations and keeps the active Conversation visible;
+- common per-Conversation response controls are available before connection and sampling details;
 - onboarding does not require model configuration;
 - Library content kinds declare `creation_mode: explicit` and `generated: false`;
 - blank creation leaves creative fields empty and produces a standard editable object;
