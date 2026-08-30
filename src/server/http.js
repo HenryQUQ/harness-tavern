@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { constantTimeEqual, id } from '../util.js'
-import { reduceEvents } from '../domain/projection.js'
+import { reduceEvents, visibleObservations } from '../domain/projection.js'
 import { buildPlayerJournal } from '../domain/journal.js'
 import { THINKING_INTENSITIES } from '../runtime/thinking.js'
 import { isStorySourceInput } from '../story/source.js'
@@ -144,6 +144,98 @@ function playerCast(cast) {
   }))
 }
 
+function playerManifest(manifest) {
+  if (!manifest || typeof manifest !== 'object') return null
+  return {
+    policy: manifest.policy,
+    budget_tokens: manifest.budget_tokens ?? null,
+    estimated_tokens: manifest.estimated_tokens ?? null,
+    included_count: Array.isArray(manifest.included) ? manifest.included.length : Number(manifest.included_count ?? 0),
+    omitted_count: Array.isArray(manifest.omitted) ? manifest.omitted.length : Number(manifest.omitted_count ?? 0),
+    truncated_blocks: Number(manifest.truncated_blocks ?? 0),
+  }
+}
+
+function playerContextManifests(manifests = {}) {
+  return Object.fromEntries(Object.entries(manifests).map(([phase, manifest]) => {
+    if (manifest?.policy) return [phase, playerManifest(manifest)]
+    return [phase, Object.fromEntries(Object.entries(manifest ?? {})
+      .map(([actorId, actorManifest]) => [actorId, playerManifest(actorManifest)])
+      .filter(([, actorManifest]) => actorManifest))]
+  }))
+}
+
+function playerReceipt(receipt, { includeReason = false } = {}) {
+  return {
+    status: receipt.status,
+    action_id: receipt.action_id,
+    action_type: receipt.action_type,
+    actor_id: receipt.actor_id,
+    outcome: receipt.outcome,
+    ...includeReason ? { reason: receipt.reason } : {},
+    changed_fact_count: Array.isArray(receipt.effects) ? receipt.effects.length : Number(receipt.changed_fact_count ?? 0),
+    state_revision_before: receipt.state_revision_before,
+    state_revision_after: receipt.state_revision_after,
+  }
+}
+
+function playerCausalResults(receipts = [], observations = []) {
+  const visible = visibleObservations({ observations }, 'user')
+  const visibleActionIds = new Set(visible.map(item => item.action_id).filter(Boolean))
+  return {
+    receipts: receipts.filter(item => item.actor_id === 'user' || visibleActionIds.has(item.action_id))
+      .map(item => playerReceipt(item, { includeReason: item.actor_id === 'user' && item.status === 'rejected' })),
+    observations: visible,
+  }
+}
+
+function playerAgenda(agenda) {
+  return {
+    id: agenda.id,
+    owner_id: agenda.owner_id,
+    objective: agenda.objective,
+    priority: agenda.priority,
+    status: agenda.status,
+    visibility: agenda.visibility,
+    evaluation_count: Number(agenda.evaluation_count ?? 0),
+  }
+}
+
+function playerLoop(run) {
+  if (!run) return null
+  const manifests = playerContextManifests(run.result?.context_manifests)
+  return {
+    id: run.id,
+    status: run.status,
+    phase: run.phase,
+    step_count: run.step_count,
+    error: run.error?.code ? { code: run.error.code, message: run.error.message } : {},
+    context_manifests: manifests,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+  }
+}
+
+function playerTurnResult(result) {
+  const causal = playerCausalResults(result.action_receipts, result.observations)
+  return {
+    turn_uid: result.turn_uid,
+    loop_id: result.loop_id,
+    command_id: result.command_id,
+    status: result.status,
+    phase: result.phase,
+    thinking_intensity: result.thinking_intensity,
+    effective_thinking_intensity: result.effective_thinking_intensity,
+    messages: result.messages ?? [],
+    action_receipts: causal.receipts,
+    observations: causal.observations,
+    pending_action_count: Array.isArray(result.pending_actions) ? result.pending_actions.length : 0,
+    usage: result.usage,
+    structured_output: result.structured_output,
+    context_manifests: playerContextManifests(result.context_manifests),
+  }
+}
+
 function playerHome(app) {
   const home = app.repository.getHome()
   return {
@@ -161,7 +253,38 @@ function playerHome(app) {
     })),
     characters: home.characters.map(item => ({ ...playerCharacter(item), favorite: Boolean(item.favorite) })),
     stories: home.stories.map(item => ({ ...playerStory(item, item.playthroughs), favorite: Boolean(item.favorite) })),
-    drafts: home.drafts.map(item => ({ id: item.id, type: item.type, title: item.title, status: item.status, updated_at: item.updated_at })),
+  }
+}
+
+function playerConversationListItem(app, conversation) {
+  const cast = app.repository.listConversationCast(conversation.id)
+  const story = conversation.story_id ? app.repository.getStory(conversation.story_id) : null
+  const publicCast = cast.map(member => ({
+    id: member.character_id,
+    name: member.character.name,
+    avatar_url: member.character.avatar_url,
+  }))
+  const characterGroupId = publicCast.length === 1
+    ? publicCast[0].id
+    : `ensemble:${publicCast.map(member => member.id).join(':') || 'general'}`
+
+  return {
+    ...conversation,
+    group: story ? {
+      kind: 'story',
+      id: story.id,
+      title: story.title,
+      subtitle: story.hook || story.summary || story.genre || '',
+      cover_url: story.cover_url,
+      cast: publicCast,
+    } : {
+      kind: 'character',
+      id: characterGroupId,
+      title: publicCast.map(member => member.name).join(', ') || 'General',
+      subtitle: publicCast.length > 1 ? 'Ensemble chat' : 'Character chat',
+      avatar_url: publicCast.length === 1 ? publicCast[0].avatar_url : '',
+      cast: publicCast,
+    },
   }
 }
 
@@ -170,7 +293,8 @@ function publicBootstrap(app) {
     version: PRODUCT_VERSION,
     product: PRODUCT_NAME,
     capabilities: [
-      'guided-creator',
+      'framework-first-content',
+      'explicit-content-lifecycle',
       'playthroughs',
       'player-journal',
       'portable-sharing',
@@ -182,6 +306,13 @@ function publicBootstrap(app) {
       'generation-presets',
       'sillytavern-generation-preset-import',
       'conversation-model-switching',
+      'causal-control-loop',
+      'typed-actions',
+      'actor-scoped-observations',
+      'persistent-agendas',
+      'resumable-turns',
+      'sillytavern-full-migration',
+      'complete-content-editors',
     ],
     user_profile: app.repository.getUserProfile(),
     home: playerHome(app),
@@ -193,11 +324,12 @@ function publicBootstrap(app) {
     account_connections: app.accounts.list(),
     extensions: app.extensions.list().map(item => ({ id: item.id, slug: item.slug, name: item.name, version: item.version, description: item.manifest.description, enabled: item.enabled, source: item.source })),
     contributions: app.extensions.contributions(),
+    content_types: app.library.contentTypes(),
     characters: app.repository.listCharacters().map(playerCharacter),
     personas: app.repository.listPersonas(),
     stories: app.repository.listStories().map(story => playerStory(story, app.repository.listPlaythroughs(story.id))),
     playthroughs: app.repository.listPlaythroughs(),
-    conversations: app.repository.listConversations(),
+    conversations: app.repository.listConversations().map(conversation => playerConversationListItem(app, conversation)),
     sample: {
       story_id: 'story_glass_observatory',
       conversation_id: app.db.raw.prepare('SELECT id FROM conversations WHERE id = ?').get('conv_glass_observatory_test')?.id ?? null,
@@ -215,6 +347,7 @@ function conversationView(app, conversationId, { creator = false } = {}) {
   const events = app.repository.events(conversationId)
   const projection = reduceEvents(events, story?.initial_state ?? {})
   const journal = buildPlayerJournal({ conversation, story, cast, projection, branches })
+  const publicCausal = playerCausalResults(projection.receipts.slice(-20), projection.observations.slice(-100))
   const base = {
     conversation,
     story: story ? playerStory(story, app.repository.listPlaythroughs(story.id)) : null,
@@ -223,6 +356,17 @@ function conversationView(app, conversationId, { creator = false } = {}) {
     branches,
     messages: projection.messages,
     journal,
+    causal: {
+      state_revision: projection.stateRevision,
+      recent_receipts: publicCausal.receipts,
+      recent_observations: publicCausal.observations.slice(-30),
+      active_agendas: Object.values(projection.agendas)
+        .filter(agenda => agenda.status === 'active' && agenda.visibility === 'public')
+        .map(playerAgenda),
+      clocks: projection.clocks,
+      known_facts: journal.known_facts,
+      latest_loop: playerLoop(app.turns.listRuns(conversationId)[0]),
+    },
     running: app.turns.isRunning(conversationId),
   }
   if (creator) return { ...base, story, cast, projection, events, usage: app.db.raw.prepare('SELECT * FROM usage_ledger WHERE conversation_id = ? ORDER BY id DESC LIMIT 100').all(conversationId) }
@@ -267,17 +411,36 @@ export function createHttpServer(app) {
       }
       if (method === 'GET' && pathname === '/api/bootstrap') return sendJson(response, 200, publicBootstrap(app))
       if (method === 'GET' && pathname === '/api/home') return sendJson(response, 200, playerHome(app))
+      if (method === 'GET' && pathname === '/api/library/content-types') return sendJson(response, 200, app.library.contentTypes())
+      if (method === 'POST' && pathname === '/api/library/items') return sendJson(response, 201, app.library.add(await bodyJson(request, app.config.requestBodyLimit)))
       if (method === 'GET' && pathname === '/api/creator/bootstrap') {
         return sendJson(response, 200, {
           characters: app.repository.listCharacters(),
           stories: app.repository.listStories(),
           personas: app.repository.listPersonas(),
-          drafts: app.repository.listDrafts(),
           extensions: app.extensions.list(),
           contributions: app.extensions.contributions(),
           imports: app.repository.listImports(),
           story_sources: app.storySources.listBindings(),
         })
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/characters/:id'))) {
+        return sendJson(response, 200, app.storySources.getRuntimeCharacter(params.id))
+      }
+      if (method === 'PUT' && (params = matchPath(pathname, '/api/creator/characters/:id'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        const { character, expected_token: expectedToken, ...fields } = input
+        app.storySources.updateRuntimeCharacter(params.id, character ?? fields, { expectedToken })
+        return sendJson(response, 200, app.storySources.getRuntimeCharacter(params.id))
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/stories/:id'))) {
+        return sendJson(response, 200, app.storySources.getRuntimeStory(params.id))
+      }
+      if (method === 'PUT' && (params = matchPath(pathname, '/api/creator/stories/:id'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        const { story, expected_digest: expectedDigest, ...fields } = input
+        app.storySources.updateRuntimeStory(params.id, story ?? fields, { expectedDigest })
+        return sendJson(response, 200, app.storySources.getRuntimeStory(params.id))
       }
 
       if (method === 'GET' && pathname === '/api/user-profile') return sendJson(response, 200, app.repository.getUserProfile())
@@ -311,9 +474,12 @@ export function createHttpServer(app) {
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/branches'))) return sendJson(response, 201, app.repository.forkBranch(params.id, await bodyJson(request, app.config.requestBodyLimit)))
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/branches/:branchId/switch'))) return sendJson(response, 200, app.repository.switchBranch(params.id, params.branchId))
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/cancel'))) return sendJson(response, 200, { cancelled: app.turns.cancel(params.id) })
+      if (method === 'GET' && (params = matchPath(pathname, '/api/conversations/:id/control-loops'))) return sendJson(response, 200, app.turns.listRuns(params.id).map(playerLoop))
+      if (method === 'GET' && (params = matchPath(pathname, '/api/control-loops/:id'))) return sendJson(response, 200, playerLoop(app.turns.getRun(params.id)))
+      if (method === 'POST' && (params = matchPath(pathname, '/api/control-loops/:id/resume'))) return sendJson(response, 200, playerTurnResult(await app.turns.resume(params.id)))
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/turn'))) {
         const input = await bodyJson(request, app.config.requestBodyLimit)
-        return sendJson(response, 200, await app.turns.run(params.id, { content: String(input.content ?? '').trim(), idempotencyKey: input.idempotency_key ?? null }))
+        return sendJson(response, 200, playerTurnResult(await app.turns.run(params.id, { content: String(input.content ?? '').trim(), idempotencyKey: input.idempotency_key ?? null })))
       }
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/turn/stream'))) {
         const input = await bodyJson(request, app.config.requestBodyLimit)
@@ -328,33 +494,44 @@ export function createHttpServer(app) {
         emit('turn.started', { thinking_intensity: conversation.thinking_intensity })
         try {
           const result = await app.turns.run(params.id, { content: String(input.content ?? '').trim(), idempotencyKey: input.idempotency_key ?? null })
+          const publicResult = playerTurnResult(result)
+          for (const receipt of publicResult.action_receipts) emit('action.receipt', receipt)
+          for (const observation of publicResult.observations) emit('observation.created', observation)
           for (const message of result.messages) {
             const chunks = message.content.match(/[\s\S]{1,64}/g) ?? []
             for (const chunk of chunks) emit('message.delta', { character_id: message.character_id, delta: chunk })
             emit('message.completed', message)
           }
-          emit('turn.completed', result)
+          emit('turn.completed', publicResult)
         } catch (error) {
           emit('turn.failed', { code: error.code || 'turn_failed', message: error.message })
         }
         return response.end()
       }
 
-      if (method === 'POST' && pathname === '/api/creator/character-drafts') return sendJson(response, 201, app.creator.generateCharacterDraft(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && pathname === '/api/creator/story-drafts') return sendJson(response, 201, app.creator.generateStoryDraft(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'GET' && pathname === '/api/creator/drafts') return sendJson(response, 200, app.repository.listDrafts(url.searchParams.get('type')))
-      if (method === 'GET' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) return sendJson(response, 200, app.repository.getDraft(params.id))
-      if (method === 'PATCH' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) return sendJson(response, 200, app.creator.updateDraft(params.id, await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'DELETE' && (params = matchPath(pathname, '/api/creator/drafts/:id'))) {
-        app.repository.deleteDraft(params.id)
-        return sendJson(response, 200, { deleted: true })
+      if (method === 'GET' && pathname === '/api/legacy/drafts') return sendJson(response, 200, app.repository.listLegacyDrafts(url.searchParams.get('type')))
+      if (method === 'GET' && (params = matchPath(pathname, '/api/legacy/drafts/:id'))) return sendJson(response, 200, app.repository.getLegacyDraft(params.id))
+      if ((method === 'POST' && ['/api/creator/character-drafts', '/api/creator/story-drafts'].includes(pathname))
+        || pathname === '/api/creator/drafts'
+        || matchPath(pathname, '/api/creator/drafts/:id')
+        || matchPath(pathname, '/api/creator/drafts/:id/publish')) {
+        const error = new Error('Guided content generation was removed from the core. Add explicit content through /api/library/items, import a standard file, or install an optional extension that owns its own generation behavior.')
+        error.status = 410
+        error.code = 'guided_creation_removed'
+        throw error
       }
-      if (method === 'POST' && (params = matchPath(pathname, '/api/creator/drafts/:id/publish'))) return sendJson(response, 201, app.creator.publishDraft(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'POST' && matchPath(pathname, '/api/extensions/from-story/:storyId')) {
+        const error = new Error('Core Story-to-template authoring was removed. Export the standard Story source or implement optional blueprint behavior in an extension.')
+        error.status = 410
+        error.code = 'core_template_authoring_removed'
+        throw error
+      }
 
       if (method === 'GET' && (params = matchPath(pathname, '/api/exports/characters/:id'))) {
-        const card = url.searchParams.get('format') === 'sillytavern-v2'
-          ? app.sharing.toCharacterCardV2(params.id)
-          : app.sharing.exportCharacter(params.id)
+        const format = url.searchParams.get('format')
+        const card = format === 'sillytavern-v3'
+          ? app.sharing.toCharacterCardV3(params.id)
+          : format === 'sillytavern-v2' ? app.sharing.toCharacterCardV2(params.id) : app.sharing.exportCharacter(params.id)
         return sendJsonDownload(response, card, app.repository.getCharacter(params.id).slug)
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/exports/stories/:id'))) {
@@ -374,6 +551,13 @@ export function createHttpServer(app) {
           persona_ids: app.repository.listPersonas().map(item => item.id),
         })
         return sendJsonDownload(response, pack, 'my-tavern-library')
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/exports/conversations/:id'))) {
+        const conversation = app.repository.getConversation(params.id)
+        return sendJsonDownload(response, app.sharing.exportConversation(params.id), `${conversation.title}.playthrough.tavern`)
+      }
+      if (method === 'GET' && pathname === '/api/exports/backup') {
+        return sendJsonDownload(response, app.sharing.exportBackup(), 'harness-tavern-backup')
       }
       if (method === 'POST' && pathname === '/api/shares') {
         const input = await bodyJson(request, app.config.requestBodyLimit)
@@ -407,12 +591,18 @@ export function createHttpServer(app) {
         const imported = app.sharing.import(input.content, { strategy: input.strategy, source_name: input.source_name })
         return sendJson(response, 201, imported)
       }
+      if (method === 'POST' && pathname === '/api/migrations/sillytavern/preview') {
+        return sendJson(response, 201, app.migrations.preview(await bodyJson(request, app.config.migrationBodyLimit)))
+      }
+      if (method === 'GET' && (params = matchPath(pathname, '/api/migrations/sillytavern/:id'))) {
+        return sendJson(response, 200, app.migrations.get(params.id))
+      }
+      if (method === 'POST' && (params = matchPath(pathname, '/api/migrations/sillytavern/:id/apply'))) {
+        return sendJson(response, 201, app.migrations.apply(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      }
 
       if (method === 'GET' && pathname === '/api/extensions') return sendJson(response, 200, { extensions: app.extensions.list(), contributions: app.extensions.contributions() })
       if (method === 'POST' && pathname === '/api/extensions/preview') return sendJson(response, 200, app.extensions.preview(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && (params = matchPath(pathname, '/api/extensions/from-story/:storyId'))) {
-        return sendJson(response, 201, app.extensions.createStoryTemplate(app.repository.getStory(params.storyId), await bodyJson(request, app.config.requestBodyLimit)))
-      }
       if (method === 'POST' && pathname === '/api/extensions') return sendJson(response, 201, app.extensions.install(await bodyJson(request, app.config.requestBodyLimit), { source: 'manual' }))
       if (method === 'PATCH' && (params = matchPath(pathname, '/api/extensions/:id'))) return sendJson(response, 200, app.extensions.setEnabled(params.id, Boolean((await bodyJson(request, app.config.requestBodyLimit)).enabled)))
       if (method === 'DELETE' && (params = matchPath(pathname, '/api/extensions/:id'))) {

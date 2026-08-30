@@ -16,7 +16,7 @@ import { assert, cleanText, nowIso, plainObject, sha256Hex, slugify, stableStrin
 import { cardToCharacter, characterToCardV2 } from '../sharing/pack.js'
 
 export const STORY_SOURCE_FORMAT = 'harness-tavern-story'
-export const STORY_SOURCE_VERSION = 1
+export const STORY_SOURCE_VERSION = 2
 export const STORY_PROJECT_BUNDLE_FORMAT = 'harness-tavern-story-project-files'
 export const STORY_SCHEMA_URL = 'https://raw.githubusercontent.com/HenryQUQ/harness-tavern/main/schemas/story.schema.json'
 
@@ -58,7 +58,7 @@ function schemaErrors(errors = []) {
 
 function validateManifest(manifest) {
   if (!validateStorySchema(manifest)) {
-    throw sourceError(`Story source does not match v1 schema: ${schemaErrors(validateStorySchema.errors)}`, 'story_schema_invalid')
+    throw sourceError(`Story source does not match the Story schema: ${schemaErrors(validateStorySchema.errors)}`, 'story_schema_invalid')
   }
   return manifest
 }
@@ -75,6 +75,8 @@ function validateSemantics(source) {
   assertUniqueKeys(source.characters, 'Character')
   assertUniqueKeys(source.lorebooks ?? [], 'Lorebook')
   assertUniqueKeys(source.scenes ?? [], 'Scene')
+  assertUniqueKeys(source.actions ?? [], 'Action')
+  assertUniqueKeys(source.agendas ?? [], 'Agenda')
   const characterKeys = new Set(source.characters.map(item => item.key))
   const castKeys = new Set()
   for (const member of source.cast) {
@@ -86,6 +88,10 @@ function validateSemantics(source) {
     for (const characterKey of scene.active_characters ?? []) {
       assert(characterKeys.has(characterKey), `Scene “${scene.key}” references missing character “${characterKey}”`, 400, 'missing_character_reference')
     }
+  }
+  for (const agenda of source.agendas ?? []) {
+    const owner = agenda.owner ?? agenda.owner_id
+    assert(owner === 'user' || characterKeys.has(owner), `Agenda “${agenda.key}” references missing owner “${owner}”`, 400, 'missing_character_reference')
   }
   const loreEntryKeys = new Set()
   for (const book of source.lorebooks ?? []) {
@@ -209,6 +215,12 @@ function resolveManifest(manifest, resolver) {
     ...item.source ? { content: resolver.read(item.source) } : {},
     source: undefined,
   }))
+  resolved.actions = (manifest.actions ?? []).map(item => item.source
+    ? { ...parseJson(resolver.read(item.source), `Action “${item.key}”`), key: item.key, source: undefined }
+    : item)
+  resolved.agendas = (manifest.agendas ?? []).map(item => item.source
+    ? { ...parseJson(resolver.read(item.source), `Agenda “${item.key}”`), key: item.key, source: undefined }
+    : item)
   const clean = JSON.parse(stableStringify(resolved))
   validateManifest(clean)
   return validateSemantics(clean)
@@ -250,7 +262,7 @@ export function loadStorySourcePath(inputPath) {
   assert(existsSync(manifestPath) && statSync(manifestPath).isFile(), `Story manifest not found: ${manifestPath}`, 404, 'story_manifest_missing')
   const resolver = fileResolver(manifestPath)
   const manifest = parseJson(readFileSync(manifestPath, 'utf8'), 'Story manifest')
-  const project = [...manifest.characters ?? [], ...manifest.lorebooks ?? [], ...manifest.scenes ?? []].some(item => item.source)
+  const project = [...manifest.characters ?? [], ...manifest.lorebooks ?? [], ...manifest.scenes ?? [], ...manifest.actions ?? [], ...manifest.agendas ?? []].some(item => item.source)
   return { source: resolveManifest(manifest, resolver), manifest, kind: project ? 'project' : 'single', manifestPath }
 }
 
@@ -342,6 +354,14 @@ export function storyToSource(story, { characterKeyById = new Map() } = {}) {
     })),
     ...lorebook.entries.length ? { lorebooks: [{ key: 'story-lore', book: lorebook }] } : {},
     ...scenes.length ? { scenes } : {},
+    ...story.runtime?.world_schema && Object.keys(story.runtime.world_schema).length ? { world_schema: deepMapStrings(story.runtime.world_schema, replacements) } : {},
+    ...story.runtime?.actions?.length ? { actions: deepMapStrings(story.runtime.actions.map(action => ({ ...action, key: action.key ?? action.id })), replacements) } : {},
+    ...story.runtime?.agendas?.length ? { agendas: deepMapStrings(story.runtime.agendas.map(agenda => {
+      const { id: agendaId, owner_id: ownerId, ...portable } = agenda
+      return { ...portable, key: agenda.key ?? agendaId, owner: agenda.owner ?? ownerId }
+    }), replacements) } : {},
+    ...story.runtime?.prompt_graph && Object.keys(story.runtime.prompt_graph).length ? { prompt_graph: deepMapStrings(story.runtime.prompt_graph, replacements) } : {},
+    ...story.runtime?.state_visibility?.length ? { state_visibility: deepMapStrings(story.runtime.state_visibility, replacements) } : {},
   }
   return loadStorySource(source).source
 }
@@ -399,6 +419,16 @@ function projectFiles(source) {
     files.set(path, `${item.content ?? ''}`)
     const { content, ...descriptor } = item
     return { ...descriptor, source: path }
+  })
+  manifest.actions = (source.actions ?? []).map(item => {
+    const path = `actions/${item.key}.action.json`
+    files.set(path, prettyJson(item))
+    return { key: item.key, source: path }
+  })
+  manifest.agendas = (source.agendas ?? []).map(item => {
+    const path = `agendas/${item.key}.agenda.json`
+    files.set(path, prettyJson(item))
+    return { key: item.key, source: path }
   })
   files.set('story.tavern.json', prettyJson(manifest))
   return files
@@ -518,6 +548,13 @@ function runtimeStory(source, characterIds) {
     cover_url: source.story.cover ?? '',
     lore,
     scenes,
+    runtime: {
+      world_schema: deepMapStrings(source.world_schema ?? {}, replacements),
+      actions: deepMapStrings(source.actions ?? [], replacements),
+      agendas: deepMapStrings((source.agendas ?? []).map(agenda => ({ ...agenda, id: agenda.key, owner_id: agenda.owner ?? agenda.owner_id })), replacements),
+      prompt_graph: deepMapStrings(source.prompt_graph ?? {}, replacements),
+      state_visibility: deepMapStrings(source.state_visibility ?? [], replacements),
+    },
     cast: source.cast.map(member => ({
       character_id: characterIds.get(member.character),
       role: member.role,
@@ -674,6 +711,42 @@ export class StorySourceService {
     return { source: loaded.source, binding: publicBinding(currentBinding, this.root) }
   }
 
+  getRuntimeStory(storyId) {
+    this.get(storyId)
+    const binding = this.binding(storyId)
+    this.compilePath(binding.source_path, { targetStoryId: storyId, strategy: 'replace' })
+    const refreshed = this.get(storyId)
+    return {
+      story: this.repository.getStory(storyId),
+      binding: refreshed.binding,
+    }
+  }
+
+  getRuntimeCharacter(characterId) {
+    const character = this.repository.getCharacter(characterId)
+    const bindings = this.#characterBindings(character.id).map(binding => {
+      const loaded = loadStorySourcePath(binding.source_path)
+      const resource = loaded.source.characters.find(item => item.key === binding.character_key)
+      assert(resource, `Story source no longer contains character key “${binding.character_key}”`, 409, 'story_source_binding_failed')
+      const rel = relative(this.root, binding.source_path)
+      return {
+        story_id: binding.story_id,
+        story_key: binding.story_key,
+        story_title: this.repository.getStory(binding.story_id).title,
+        character_key: binding.character_key,
+        kind: binding.source_kind,
+        path: rel && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? rel : basename(binding.source_path),
+        linked: rel.startsWith(`..${sep}`) || isAbsolute(rel),
+        resource_digest: sha256Hex(stableStringify(resource.card)),
+      }
+    })
+    return {
+      character,
+      bindings,
+      edit_token: sha256Hex(stableStringify({ character: comparableCharacter(character), slug: character.slug, bindings })),
+    }
+  }
+
   save(storyId, input, { expectedDigest = null } = {}) {
     const binding = this.binding(storyId)
     assert(binding, 'Story has no editable source binding', 404, 'story_source_not_found')
@@ -714,6 +787,7 @@ export class StorySourceService {
       content_warnings: input.content_warnings ?? [],
       tags: input.tags ?? [],
       scenes: input.scenes ?? [],
+      runtime: input.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} },
       metadata: input.metadata ?? {},
       share_policy: input.share_policy ?? {},
       visibility: input.visibility ?? 'private',
@@ -732,13 +806,12 @@ export class StorySourceService {
     }).story
   }
 
-  updateRuntimeStory(storyId, input) {
-    let currentStory = this.repository.getStory(storyId)
-    const existingBinding = this.binding(currentStory.id)
-    if (existingBinding) {
-      this.compilePath(existingBinding.source_path, { targetStoryId: currentStory.id, strategy: 'replace' })
-      currentStory = this.repository.getStory(currentStory.id)
-    }
+  updateRuntimeStory(storyId, input, { expectedDigest = null } = {}) {
+    const opened = this.get(storyId)
+    assert(!expectedDigest || expectedDigest === opened.binding.digest, 'The Story source changed after you opened the editor. Reload before saving so newer file edits are not overwritten.', 409, 'story_source_conflict')
+    const existingBinding = this.binding(storyId)
+    this.compilePath(existingBinding.source_path, { targetStoryId: storyId, strategy: 'replace' })
+    const currentStory = this.repository.getStory(storyId)
     const cast = input.cast === undefined ? currentStory.cast : input.cast.map((member, index) => ({
       ...member,
       sort_order: index,
@@ -752,10 +825,12 @@ export class StorySourceService {
     const loaded = this.get(currentStory.id)
     const characterKeyById = new Map(this.db.raw.prepare('SELECT character_key, character_id FROM story_source_characters WHERE story_id = ?').all(currentStory.id).map(row => [row.character_id, row.character_key]))
     const next = mergeRuntimeIntoSource(loaded.source, proposed, characterKeyById)
-    return this.save(currentStory.id, next).story
+    return this.save(currentStory.id, next, { expectedDigest: expectedDigest ?? loaded.binding.digest }).story
   }
 
-  updateRuntimeCharacter(characterId, input) {
+  updateRuntimeCharacter(characterId, input, { expectedToken = null } = {}) {
+    const opened = this.getRuntimeCharacter(characterId)
+    assert(!expectedToken || expectedToken === opened.edit_token, 'The Character or one of its Story source files changed after you opened the editor. Reload before saving so newer edits are not overwritten.', 409, 'character_edit_conflict')
     const bindings = this.#characterBindings(characterId)
     for (const binding of bindings) loadStorySourcePath(binding.source_path)
     const character = this.repository.updateCharacter(characterId, input)
@@ -860,7 +935,7 @@ export class StorySourceService {
         ON CONFLICT(story_id) DO UPDATE SET story_key=excluded.story_key, source_path=excluded.source_path,
           source_kind=excluded.source_kind, source_digest=excluded.source_digest, source_version=excluded.source_version,
           loaded_at=excluded.loaded_at, updated_at=excluded.updated_at, last_error=NULL
-      `).run(story.id, source.story_key, resolve(bindingPath), bindingKind, sha256Hex(stableStringify(source)), STORY_SOURCE_VERSION, timestamp, timestamp)
+      `).run(story.id, source.story_key, resolve(bindingPath), bindingKind, sha256Hex(stableStringify(source)), Number(source.format_version), timestamp, timestamp)
     })
     this.db.audit('story_source.compiled', 'story', story.id, { story_key: source.story_key, source_kind: bindingKind })
     return { story: this.repository.getStory(story.id), characters: savedCharacters, source }
@@ -876,7 +951,7 @@ export class StorySourceService {
         ON CONFLICT(story_id) DO UPDATE SET story_key=excluded.story_key, source_path=excluded.source_path,
           source_kind=excluded.source_kind, source_digest=excluded.source_digest, source_version=excluded.source_version,
           loaded_at=excluded.loaded_at, updated_at=excluded.updated_at, last_error=NULL
-      `).run(story.id, source.story_key, resolve(manifestPath), kind, sha256Hex(stableStringify(source)), STORY_SOURCE_VERSION, timestamp, timestamp)
+      `).run(story.id, source.story_key, resolve(manifestPath), kind, sha256Hex(stableStringify(source)), Number(source.format_version), timestamp, timestamp)
       this.db.raw.prepare('DELETE FROM story_source_characters WHERE story_id = ?').run(story.id)
       for (const resource of source.characters) {
         const characterId = bySlug.get(resource.key)
@@ -921,6 +996,18 @@ export class StorySourceService {
       }
       return item
     })
+    for (const collection of ['actions', 'agendas']) {
+      const currentResources = new Map((current.manifest[collection] ?? []).map(item => [item.key, item]))
+      manifest[collection] = (next[collection] ?? []).map(item => {
+        const prior = currentResources.get(item.key)
+        if (prior?.source) {
+          const path = safeResourcePath(dirname(current.manifestPath), prior.source)
+          writes.push([path, prettyJson(item)])
+          return { key: item.key, source: prior.source }
+        }
+        return item
+      })
+    }
     writes.push([current.manifestPath, prettyJson(manifest)])
     atomicWriteFiles(writes)
   }
@@ -933,7 +1020,7 @@ export class StorySourceService {
 
   #characterBindings(characterId) {
     return this.db.raw.prepare(`
-      SELECT ssc.story_id, ssc.character_key, ss.story_key, ss.source_path
+      SELECT ssc.story_id, ssc.character_key, ss.story_key, ss.source_path, ss.source_kind
       FROM story_source_characters ssc
       JOIN story_sources ss ON ss.story_id = ssc.story_id
       WHERE ssc.character_id = ?

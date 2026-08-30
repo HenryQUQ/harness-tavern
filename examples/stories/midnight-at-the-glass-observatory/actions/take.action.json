@@ -1,0 +1,24 @@
+{
+  "label": "Take an item",
+  "description": "Take a portable item from the current scene.",
+  "actor": "user",
+  "parameters_schema": {
+    "type": "object",
+    "required": ["item"],
+    "properties": {
+      "item": { "type": "string", "pattern": "^[a-z0-9_-]+$" }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    { "path": "world.items.{{params.item}}.portable", "operator": "eq", "value": true, "message": "That item is not portable." },
+    { "path": "world.items.{{params.item}}.location", "operator": "eq", "value": "$state.scene.id", "message": "The item is not in the current scene." }
+  ],
+  "effects": [
+    { "op": "append", "path": "world.inventory.user", "value": "$params.item" },
+    { "op": "set", "path": "world.items.{{params.item}}.location", "value": "user" }
+  ],
+  "observations": [
+    { "audience": ["public"], "template": "{{actor_name}} takes {{params.item}}." }
+  ]
+}

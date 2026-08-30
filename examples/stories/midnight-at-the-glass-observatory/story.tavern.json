@@ -1,7 +1,7 @@
 {
   "$schema": "../../../schemas/story.schema.json",
   "format": "harness-tavern-story",
-  "format_version": 1,
+  "format_version": 2,
   "story_key": "midnight-at-the-glass-observatory",
   "story": {
     "title": "Midnight at the Glass Observatory",
@@ -29,6 +29,27 @@
       },
       "observatory": {
         "authority": "revoked"
+      },
+      "doors": {
+        "west_hall": {
+          "locked": true,
+          "open": false
+        }
+      },
+      "inventory": {
+        "user": []
+      },
+      "items": {
+        "archive_key": {
+          "label": "Archive key",
+          "location": "central-hall",
+          "portable": true
+        },
+        "lens_fragment": {
+          "label": "Celestial lens fragment",
+          "location": "rowan-ash",
+          "portable": false
+        }
       }
     },
     "author_notes": "Let the cast disagree naturally. Reveal private information only through evidence or the character who knows it.",
@@ -113,6 +134,32 @@
         "rowan-ash",
         "lyra-voss"
       ]
+    }
+  ],
+  "world_schema": {
+    "type": "object",
+    "required": ["doors", "inventory", "items"],
+    "properties": {
+      "doors": { "type": "object" },
+      "inventory": { "type": "object" },
+      "items": { "type": "object" }
+    }
+  },
+  "actions": [
+    { "key": "take", "source": "actions/take.action.json" },
+    { "key": "unlock", "source": "actions/unlock.action.json" },
+    { "key": "open", "source": "actions/open.action.json" }
+  ],
+  "agendas": [
+    { "key": "mira-protect-archive", "source": "agendas/mira-protect-archive.agenda.json" },
+    { "key": "rowan-survive", "source": "agendas/rowan-survive.agenda.json" },
+    { "key": "lyra-stop-gate", "source": "agendas/lyra-stop-gate.agenda.json" }
+  ],
+  "state_visibility": [
+    {
+      "path": "items.lens_fragment",
+      "audience": ["rowan-ash", "director"],
+      "note": "The control planner may reason about it; only Rowan may narrate from it before revelation."
     }
   ]
 }

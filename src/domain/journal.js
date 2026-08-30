@@ -1,4 +1,5 @@
 import { deepClone } from '../util.js'
+import { visibleObservations, visibleWorld } from './projection.js'
 
 const PRIVATE_KEYS = /(^|[_-])(secret|private|director|internal|hidden|credential|token|password|thought|feeling)s?($|[_-])/i
 
@@ -39,7 +40,10 @@ function knownFacts(projection, story) {
   const lore = (story?.lore ?? [])
     .filter(item => !item.visibility || item.visibility === 'public')
     .map(item => ({ id: item.id, content: item.content, title: item.title, source: 'story' }))
-  return [...lore, ...memories].filter(item => item.content).slice(0, 30)
+  const observations = visibleObservations(projection, 'user')
+    .filter(item => item.kind !== 'rejection')
+    .map(item => ({ id: item.id ?? item.event_id, content: item.content, source: 'observation', action_id: item.action_id }))
+  return [...lore, ...memories, ...observations].filter(item => item.content).slice(-60)
 }
 
 export function buildPlayerJournal({ conversation, story, cast, projection, branches }) {
@@ -56,14 +60,36 @@ export function buildPlayerJournal({ conversation, story, cast, projection, bran
   }
   const recap = projection.summary
     || projection.messages.slice(-6).map(message => `${message.actor_id === 'user' ? 'You' : cast?.find(item => item.character_id === message.actor_id)?.character.name || 'Narrator'}: ${message.content}`).join('\n')
+  const observations = visibleObservations(projection, 'user')
+  const visibleActionIds = new Set(observations.map(item => item.action_id).filter(Boolean))
+  const world = sanitize(visibleWorld(story, projection.world, 'user'))
   return {
     current_scene: projection.scene ?? story?.initial_state?.scene ?? null,
     recap,
     open_threads: openThreads(projection, story),
     relationships,
     known_facts: knownFacts(projection, story),
-    important_objects: sanitize(projection.world?.inventory ?? projection.world?.objects ?? {}),
-    world: sanitize(projection.world),
+    important_objects: world.inventory ?? world.objects ?? {},
+    world,
+    causal: {
+      state_revision: projection.stateRevision,
+      recent_actions: projection.receipts
+        .filter(receipt => receipt.actor_id === 'user' || visibleActionIds.has(receipt.action_id))
+        .slice(-20).map(receipt => ({
+        action_id: receipt.action_id,
+        action_type: receipt.action_type,
+        actor_id: receipt.actor_id,
+        status: receipt.status,
+        outcome: receipt.outcome,
+        ...receipt.actor_id === 'user' && receipt.status === 'rejected' ? { reason: receipt.reason } : {},
+        changed_fact_count: receipt.effects?.length ?? 0,
+      })),
+      active_intents: Object.values(projection.agendas)
+        .filter(agenda => agenda.status === 'active' && agenda.visibility === 'public')
+        .map(agenda => ({ id: agenda.id, owner_id: agenda.owner_id, objective: agenda.objective, priority: agenda.priority, last_decision: agenda.last_decision ?? null })),
+      observations: observations.slice(-30),
+      clocks: deepClone(projection.clocks),
+    },
     timelines: (branches ?? []).map(branch => ({
       id: branch.id,
       label: branch.label,

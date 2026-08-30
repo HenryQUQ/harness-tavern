@@ -1,0 +1,23 @@
+{
+  "label": "Open a route",
+  "description": "Open an authored route only when it is unlocked.",
+  "actor": "user",
+  "parameters_schema": {
+    "type": "object",
+    "required": ["target"],
+    "properties": {
+      "target": { "type": "string", "pattern": "^[a-z0-9_-]+$" }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    { "path": "world.doors.{{params.target}}", "operator": "exists", "message": "That route does not exist." },
+    { "path": "world.doors.{{params.target}}.locked", "operator": "eq", "value": false, "message": "The route remains locked.", "audience": ["public"] }
+  ],
+  "effects": [
+    { "op": "set", "path": "world.doors.{{params.target}}.open", "value": true }
+  ],
+  "observations": [
+    { "audience": ["public"], "template": "{{params.target}} opens." }
+  ]
+}

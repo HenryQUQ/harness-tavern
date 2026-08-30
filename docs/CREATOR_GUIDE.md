@@ -1,72 +1,100 @@
-# Creator Guide
+# Content authoring guide
 
-## Create a character
+Harness Tavern provides a general content framework, not a built-in creative method. The core can create a valid blank Character or Story structure, import a standard file, validate it, edit every authored field, and make it playable. It does not infer personality, genre, plot, prose, or private intent from a brief.
 
-1. Open **Create**.
-2. Choose **Character** or a friendly Character Template.
-3. Describe who the character is and what kind of relationship you want.
-4. Generate the draft.
-5. Review the first message, voice, goals, private facts, and boundaries.
-6. Publish, then start a chat or add the character to a Story.
+## Add a Character
 
-A useful brief sounds like:
+1. Open **Library** and choose **New**.
+2. Choose **Blank Character**.
+3. Enter a name. No other field is generated.
+4. Use the complete Character editor to enter only the material you want.
 
-> A reserved museum conservator named Noor who notices tiny details, has dry humour, and slowly learns to trust the user. She should disagree when preservation ethics matter.
+The editor exposes identity, description, appearance, personality, voice, scenario, first message, goals, secrets, boundaries, creator notes, Character Card metadata, tags, and extension data. Saving validates the complete model. If a Character is bound to a canonical Story source, the bound source is updated as well; a newer external file edit is never silently overwritten.
 
-You do not need to describe prompts, memory systems, or state schemas.
+You can instead choose **Import standard content** and preview a Character Card V2/V3, PNG, CHARX, Tavern pack, or supported SillyTavern data before it changes the Library.
 
-## Create a story
+## Add a Story
 
-1. Open **Create**.
-2. Choose a Story Template or start from a blank brief.
-3. Describe the experience, not the implementation.
-4. Choose cast size, genre, tone, and player role.
-5. Generate an editable draft.
-6. Review each cast member’s role and private context.
-7. Publish and Playtest.
+1. Add or import at least one Character.
+2. Open **Library → New → Blank Story**.
+3. Enter a title and explicitly select the initial Cast.
+4. Open the resulting Story workspace.
 
-Publishing creates a versioned editable Story source. Open the Story and choose **Edit Story source** to inspect or change the self-contained JSON, or download it for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks and Markdown scenes in separate files. Single-character and multi-character Stories use the same format.
+This operation creates a canonical `harness-tavern-story/v2` source with empty authored fields. It does not choose a genre, tone, premise, opening, Scene, Action, Agenda, or world fact.
 
-A useful brief sounds like:
+The Story workspace is organized by structure:
 
-> Three former friends are trapped overnight in an abandoned broadcast station. One of them caused the emergency, another knows why the station was closed, and the third is trying to keep everyone together. The user arrives as a freelance engineer.
+- **Overview** — identity, player-facing summary, player role, tone, visibility, tags, cover, and content notes.
+- **Cast** — Character references, order, role, and public/private Story context.
+- **World & lore** — opening, world rules, and audience-scoped Lore.
+- **Scenes** — ordered Markdown Scenes and their active Cast.
+- **Causality** — Initial State, World Schema, typed Actions, durable Agendas, State Visibility, and Prompt Graph.
+- **Advanced** — author notes, metadata, share policy, and the complete source editor.
 
-## What makes a strong multi-character Story
+Every save validates and writes the canonical source before rebuilding its runtime projection. A stale browser editor receives a conflict instead of overwriting a newer source-file change. Narrator-only, single-character, and multi-character Stories all use the same v2 contract; the number of Cast members does not select a different Story type.
 
-Each character should have:
+## Edit as files
 
-- a reason to remain in the scene;
-- a goal that is not identical to everyone else’s;
-- something they know publicly;
-- something only they know;
-- a plausible reason not to reveal everything immediately;
-- a distinct speaking rhythm;
-- a boundary preventing them from controlling the user.
+A small Story can remain one self-contained JSON document. A larger Story project can reference separate Character Cards, Lorebooks, Markdown Scenes, Actions, and Agendas. Both forms resolve to the same authored model.
 
-## Public and private information
+Use the complete source editor for direct JSON control, or export a project for an ordinary text editor:
 
-Use **public context** for what the cast can reasonably know at the beginning. Use **private context** for facts that guide one character’s behaviour but must not automatically become group knowledge.
+```bash
+npm run story:export -- <story-key> <directory> --project
+```
 
-Director-only Lore can move the story, but it should reach the player through evidence, events, or a character who has earned the right to reveal it.
+Validate a file or project before importing it:
 
-## World rules
+```bash
+npm run story:validate -- <path-to-story.tavern.json>
+```
 
-Hard rules should describe facts the narration cannot casually ignore, for example:
+See [Editable Story sources](STORY_SOURCES.md) for the schema, file layout, binding behavior, and Git workflow.
 
-- a sealed door needs a key, authority, force, or another credible method;
-- only a named character knows the code;
-- midnight occurs after the world clock reaches zero;
-- the player’s thoughts and actions are never selected by the system.
+## Framework boundary
 
-## Playtest checklist
+Core Library creation accepts only an explicit envelope:
 
-- Ask each character the same question separately. Do their answers differ?
-- Ask one character about another’s secret. Do they avoid unexplained omniscience?
-- Attempt an impossible action. Does the world resist rather than silently comply?
-- Stay silent and let the cast continue. Do they pursue their own goals?
-- Create a What-if Timeline. Does later information remain isolated between branches?
-- Open the Player Journal. Does it avoid creator-only information?
+```json
+{
+  "kind": "character",
+  "content": {
+    "name": "A name chosen by the author"
+  }
+}
+```
 
-## Share the story
+or:
 
-Use **Public preview** when the goal is discovery. Use **Download editable Story source** when another creator should read, version or modify the Story. Use **Download portable Tavern pack** for signed legacy import compatibility. State the license and whether remixing is allowed.
+```json
+{
+  "kind": "story",
+  "content": {
+    "title": "A title chosen by the author",
+    "cast": [
+      { "character_id": "existing-character-id" }
+    ]
+  }
+}
+```
+
+Blank structural defaults may be added to make the file valid, but authored meaning is never synthesized. Requests containing a top-level brief, prompt, template selector, or other implicit-generation instruction are rejected by `/api/library/items`.
+
+An optional extension may expose its own opinionated assistant or blueprint. That behavior must remain visibly owned by the extension and must write an explicit standard Character or Story back through the same validation boundary. The core does not silently consume extension blueprints as generation instructions.
+
+## Playtest, share, and export
+
+Starting a Character chat or Story Playthrough does not copy content into chat history as its source of truth. Authored source, runtime state, and conversation events remain separate.
+
+Use:
+
+- **Public preview** for a revocable player-safe snapshot;
+- **Editable Story source** for review, versioning, and modification;
+- **Tavern pack** for a portable playable distribution snapshot;
+- **Portable playthrough** when the causal event history should continue elsewhere.
+
+Provider credentials and local database identifiers are excluded from portable content.
+
+## Legacy generated drafts
+
+Older installations may contain drafts created by the retired guided-creation workflow. Harness Tavern preserves those database rows and exposes them through the read-only `/api/legacy/drafts` endpoints; it does not delete or automatically publish them. Move any material you still need into an explicit Character or Story source. The old generation and publish routes return HTTP 410.

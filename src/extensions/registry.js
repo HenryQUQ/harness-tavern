@@ -9,27 +9,14 @@ const BUILTIN_MANIFEST = Object.freeze({
   format_version: EXTENSION_VERSION,
   id: 'extension_tavern_basics',
   slug: 'tavern-basics',
-  name: 'Tavern Basics',
+  name: 'Tavern Foundation',
   version: '1.0.0',
-  description: 'Friendly starting points for characters, stories and roleplay actions.',
+  description: 'Base presentation tokens. Creative behaviors and content belong to optional extensions.',
   publisher: 'Harness Tavern',
   capabilities: {
-    character_templates: [
-      { id: 'companion', name: 'Warm companion', description: 'A grounded character designed for ongoing conversation.', defaults: { tags: ['companion'], speech_style: 'Natural, attentive and emotionally consistent.', boundaries: ['Never invents the user’s private thoughts or decisions.'] } },
-      { id: 'rival', name: 'Friendly rival', description: 'A capable foil with their own goals and a reason to keep returning.', defaults: { tags: ['rival'], personality: 'Competitive, observant, fair-minded beneath the challenge.' } },
-      { id: 'guide', name: 'World guide', description: 'A character who introduces an unfamiliar setting without lecturing.', defaults: { tags: ['guide'], personality: 'Knowledgeable, patient, curious about the traveller.' } },
-    ],
-    story_templates: [
-      { id: 'ensemble-mystery', name: 'Ensemble mystery', description: 'Three people know different pieces of the truth.', defaults: { genre: 'Mystery', tone: 'Atmospheric and choice-driven', cast_size: 3, tags: ['mystery', 'ensemble'] } },
-      { id: 'cozy-companion', name: 'Cozy companion story', description: 'A small setting where a relationship can grow over time.', defaults: { genre: 'Slice of life', tone: 'Warm, intimate and unhurried', cast_size: 1, tags: ['cozy', 'relationship'] } },
-      { id: 'adventure-party', name: 'Adventure party', description: 'A travelling group with complementary skills and competing priorities.', defaults: { genre: 'Adventure', tone: 'Energetic, character-led and consequential', cast_size: 4, tags: ['adventure', 'party'] } },
-    ],
-    quick_actions: [
-      { id: 'ask', label: 'Ask a question', prompt: 'I ask a direct question about what just happened.' },
-      { id: 'observe', label: 'Look around', prompt: 'I take a careful look around the current scene without assuming what I find.' },
-      { id: 'continue', label: 'Let the scene continue', prompt: '[Continue the scene naturally. Let the characters act from their own goals without deciding my actions.]' },
-      { id: 'ooc', label: 'Out of character', prompt: '[OOC: ]' },
-    ],
+    character_templates: [],
+    story_templates: [],
+    quick_actions: [],
     themes: [
       { id: 'midnight', name: 'Midnight Tavern', tokens: { surface: '#17151f', accent: '#9f8cff', warmth: '#e2b984' } },
       { id: 'parchment', name: 'Parchment', tokens: { surface: '#f4ecdc', accent: '#7a4d35', warmth: '#b36b3d' } },
@@ -136,7 +123,7 @@ export class ExtensionRegistry {
       existing: existing ?? null,
       counts,
       warnings: [
-        'This extension is declarative: it can add creation templates, quick actions, and themes, but it cannot execute code.',
+        'This extension is declarative: it can contribute optional data blueprints, composer actions, and themes, but it cannot execute code. Core Library creation never treats blueprints as generation instructions.',
         ...(existing ? [`An installed extension named “${existing.name}” will be updated.`] : []),
       ],
     }
@@ -186,72 +173,6 @@ export class ExtensionRegistry {
     return this.get(extensionId).manifest
   }
 
-  createStoryTemplate(story, input = {}) {
-    assert(story && story.id, 'Story is required')
-    const librarySlug = 'my-story-templates'
-    const existingRow = this.db.raw.prepare('SELECT * FROM extensions WHERE slug = ?').get(librarySlug)
-    const manifest = existingRow ? structuredClone(fromRow(existingRow).manifest) : {
-      format: EXTENSION_FORMAT,
-      format_version: EXTENSION_VERSION,
-      id: 'extension_my_story_templates',
-      slug: librarySlug,
-      name: 'My story templates',
-      version: '1.0.0',
-      description: 'Reusable story starting points created in Harness Tavern.',
-      publisher: 'Local creator',
-      capabilities: { story_templates: [], character_templates: [], quick_actions: [], themes: [] },
-    }
-    const templateId = slugify(input.id || story.slug || story.title, 'story-template')
-    const castBlueprint = (story.cast ?? []).map(member => ({
-      source_character_id: member.character_id,
-      role: member.role,
-      public_context: member.public_context,
-      private_context: member.private_context,
-      character: {
-        name: member.character?.name,
-        description: member.character?.description,
-        personality: member.character?.personality,
-        appearance: member.character?.appearance,
-        speech_style: member.character?.speech_style,
-        goals: member.character?.goals ?? [],
-        secrets: member.character?.secrets ?? [],
-        boundaries: member.character?.boundaries ?? [],
-        tags: member.character?.tags ?? [],
-      },
-    }))
-    const template = {
-      id: templateId,
-      name: cleanText(input.name || `${story.title} pattern`, 120),
-      description: cleanText(input.description || `Start a new story using the cast balance and world structure of “${story.title}”.`, 1000),
-      defaults: {
-        genre: story.genre,
-        tone: story.tone,
-        cast_size: Math.max(1, story.cast?.length || 1),
-        tags: story.tags ?? [],
-        player_role: story.player_role,
-        world_rules: story.world_rules ?? [],
-        content_warnings: story.content_warnings ?? [],
-        opening_scene: story.opening_scene,
-        author_notes: story.author_notes,
-        cast_blueprint: castBlueprint,
-        scene_blueprints: story.scenes ?? [],
-      },
-    }
-    const templates = manifest.capabilities?.story_templates ?? []
-    const index = templates.findIndex(item => item.id === templateId)
-    if (index >= 0) templates[index] = template
-    else templates.push(template)
-    manifest.capabilities = { story_templates: templates, character_templates: manifest.capabilities?.character_templates ?? [], quick_actions: manifest.capabilities?.quick_actions ?? [], themes: manifest.capabilities?.themes ?? [] }
-    manifest.version = this.#nextPatchVersion(manifest.version)
-    const extension = this.install(manifest, { source: 'creator', enabled: true })
-    return { extension, template: extension.manifest.capabilities.story_templates.find(item => item.id === templateId) }
-  }
-
-  #nextPatchVersion(version) {
-    const match = String(version || '1.0.0').match(/^(\d+)\.(\d+)\.(\d+)$/)
-    if (!match) return '1.0.1'
-    return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`
-  }
 }
 
 export { BUILTIN_MANIFEST }

@@ -20,7 +20,8 @@ export const DEFAULT_GENERATION = Object.freeze({
 
 export const DEFAULT_PROMPT = Object.freeze({
   custom_instructions: '',
-  history_messages: 32,
+  history_messages: null,
+  context_budget_tokens: null,
 })
 
 const OPTIONS = Object.freeze({
@@ -125,7 +126,8 @@ export function normalizePrompt(input = {}, base = DEFAULT_PROMPT) {
   base = { ...DEFAULT_PROMPT, ...(base ?? {}) }
   return {
     custom_instructions: cleanText(input.custom_instructions === undefined ? base.custom_instructions : input.custom_instructions, 20_000),
-    history_messages: number(input.history_messages, base.history_messages, { min: 0, max: 200, integer: true, label: 'history_messages' }),
+    history_messages: nullableInteger(input.history_messages, base.history_messages, { min: 0, max: 10_000, label: 'history_messages' }),
+    context_budget_tokens: nullableInteger(input.context_budget_tokens, base.context_budget_tokens, { min: 512, max: 10_000_000, label: 'context_budget_tokens' }),
   }
 }
 

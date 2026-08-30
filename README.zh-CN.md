@@ -1,214 +1,145 @@
-# Harness Tavern
+<p align="center">
+  <img src="public/icon.svg" width="104" height="104" alt="Harness Tavern 标志">
+</p>
 
-[![CI](https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml/badge.svg)](https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-6f5bd3.svg)](LICENSE)
+<h1 align="center">Harness Tavern</h1>
 
-[English](README.md)
+<p align="center">
+  <strong>让角色扮演世界真正记得发生过什么。</strong><br>
+  一个本地优先、角色持续、故事有因果、模型可自由切换的下一代酒馆。
+</p>
 
-Harness Tavern 是一个以 **Tavern 体验为核心**的持久角色聊天与角色扮演应用。用户面对的是角色、关系、故事、场景、回忆和选择；事件日志、状态事务、模型路由、私人知识和回放等 Harness 能力隐藏在后台。
+<p align="center">
+  <a href="https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml"><img src="https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-c792ea.svg" alt="MIT 许可证"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-22.19%2B-82d9c8.svg" alt="Node.js 22.19 或更新版本"></a>
+  <img src="https://img.shields.io/badge/version-0.13.0-ffba66.svg" alt="版本 0.13.0">
+</p>
 
-当前版本：**0.12.0**
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="docs/GETTING_STARTED.md">开始使用</a> ·
+  <a href="docs/README.md">完整文档</a> ·
+  <a href="https://github.com/HenryQUQ/harness-tavern/discussions">社区讨论</a>
+</p>
 
-## 一条命令启动
+---
 
-需要 Node.js 22.19 或更新版本。
+Harness Tavern 面向那些希望角色和故事在长对话之后依然保持一致的用户。它会记住已经打开的门、做出的承诺、仍未公开的秘密，以及尚未完成的角色意图。
+
+对话是你体验故事的方式，但不再是系统判断事实的唯一依据。
+
+## 为什么体验不同
+
+传统角色扮演前端主要让模型根据文字历史“合理续写”。Harness Tavern 会先判断世界规则是否允许当前行动，记录真实结果，把每个角色能够观察到的内容分别交给他们，最后才生成叙事。
+
+```mermaid
+flowchart LR
+    A[你选择行动] --> B[世界规则进行判断]
+    B --> C[事实被正式记录]
+    C --> D[角色获得各自观察]
+    D --> E[场景被自然地叙述]
+```
+
+因此你会得到：
+
+- **持续存在的世界**——事实、关系、目标和承诺不会因为切换模型而消失。
+- **有长期方向的角色**——角色意图会持续存在，直到事件真正让它完成、失败或暂停。
+- **属于玩家的自主权**——AI 不能擅自替你说话、思考、感受，或宣布你的行动已经成功。
+- **彼此隔离的秘密**——一个角色不会无缘无故知道其他角色的私人信息。
+- **真实行动后果**——不可能的行动可以失败，叙事不能偷偷把失败写成成功。
+- **安全的故事分支**——可以创建“如果当时……”时间线，而不会覆盖原本经历。
+
+## 你可以做什么
+
+| 体验 | 对普通用户意味着什么 |
+|---|---|
+| 认识角色 | 从可编辑角色档案开始，让关系与记忆跨会话持续。 |
+| 进入故事 | 用同一种简单界面游玩纯旁白、单角色或多人故事。 |
+| 随时修改内容 | 重新打开任意角色或故事，修改声音、私人意图、阵容、Lore、Scene、Action、Agenda 与元数据。 |
+| 不依赖固定生成器 | 从空白标准结构开始，或导入便携文件，再直接编辑每个字段。内核不会用内置创作 Prompt 扩写 brief。 |
+| 自由选择 AI | 在不同 API 与模型之间切换，不需要重建角色和存档。 |
+| 调整回复方式 | 用预设管理风格、采样、思考强度、主动性和上下文策略。 |
+| 迁移已有内容 | 先预览，再迁移兼容的 SillyTavern 角色、聊天、群组、世界书、Persona 和预设。 |
+| 分享自己的作品 | 导出可编辑 Story、可玩 Tavern Pack、公开预览或可继续游玩的存档。 |
+
+## 在本地开始
+
+需要安装 [Node.js 22.19 或更新版本](https://nodejs.org/)和 Git。
 
 ```bash
+git clone https://github.com/HenryQUQ/harness-tavern.git
+cd harness-tavern
+npm ci
 npm start
 ```
 
-打开 `http://127.0.0.1:8787`。
+打开 **http://127.0.0.1:8787**。
 
-应用会自动准备：离线演示模型、默认玩家 Persona、三名示例角色，以及多角色故事 **Midnight at the Glass Observatory**。新用户不需要先理解 API Key、Provider、Prompt 或 Agent 模式，就能收到第一条角色回复。
+第一次使用不需要 API Key。Harness Tavern 内置离线演示连接、默认玩家 Persona、三名示例角色，以及多人故事 **Midnight at the Glass Observatory**，同时不会自动创建 dummy 对话。
 
-## 产品原则
+更完整的安装、连接模型、迁移、备份与排错说明，请阅读[开始使用](docs/GETTING_STARTED.md)。
 
-- **使用酒馆语言，而不是基础设施语言。** 一级入口是 Home、Chats、Library、Create、Settings。
-- **逐步展开复杂度。** 模型连接、路由、回复深度、费用和创作者调试信息都存在，但不会阻挡第一次体验。
-- **用户永远拥有自己的角色。** 系统不能代替用户说话、思考、感受、决定身份或宣告行动成功。
-- **私人知识必须隔离。** 玩家 Journal、公开分享预览和创作者 Inspector 使用不同的数据投影。
-- **内容先于平台锁定。** 角色和故事可以通过版本化 Tavern Pack 或便携分享链接迁移。
-- **扩展不等于执行陌生代码。** 可导入扩展仅包含声明式模板、快捷动作和主题。
+## 最初几分钟
 
-## 玩家旅程
+1. 告诉酒馆应该怎么称呼你。
+2. 选择**认识角色**、**进入故事**，或通过 **Library → New** 建立空白角色 / 故事。
+3. 尝试一个行动，再打开 Story Engine 面板查看已知事实、行动结果、持续意图和时间线。
+4. 准备好后，在 **Settings → AI Connections** 中加入自己常用的 AI 服务。
+5. 在聊天顶部打开模型菜单，随时切换 API、模型或回复预设。
 
-### 第一次进入
+内置演示模型负责让第一次体验足够简单。真实 API 可以稍后再连接，不会影响已经创建的角色和故事。
 
-引导只问两个问题：
+## 带入 SillyTavern 内容
 
-1. 酒馆应该怎么称呼你？
-2. 你想认识角色、进入故事，还是创建内容？
+打开 **Settings → Import from SillyTavern**，选择 Character Card、备份 ZIP 或用户数据目录。真正写入前，Harness Tavern 一定会先显示迁移计划。
 
-不会要求用户先选择模型或 Provider，默认直接使用内置演示模型。
+兼容内容包括 Characters、Chats、Group Chats、Groups、World Info、Personas 和生成预设。密钥始终排除；扩展、Quick Replies、主题与向量索引只会进入清单，不会执行其中的陌生代码。
 
-### Home
+详细兼容范围请查看[迁移指南](docs/MIGRATION.md)。
 
-首页展示：
+## 故事文件属于你
 
-- 最近对话与故事存档，以及可读的剧情摘要；
-- 可以直接认识的角色；
-- 可以进入的故事；
-- 未完成的创作草稿；
-- 三角色示例故事入口。
+每个 Story 都有可编辑的 `harness-tavern-story/v2` 源文件：
 
-### 角色聊天
+- 小型故事可以放在一个自包含 JSON 文件中；
+- 大型项目可以拆成 Character、Lorebook、Markdown Scene、Action 和 Agenda 文件；
+- 可以使用内置编辑器，也可以直接使用任何文本编辑器；
+- 可以使用 Git 保存和审查每次改动；
+- 导出内容不会携带 Provider 凭据或本地数据库 ID。
 
-进入 Character Profile，选择自己要使用的 Persona，然后开始或继续聊天。角色身份、语气、目标、边界、记忆和关系状态独立于具体模型长期保存。
+角色与故事可通过完整的可视化工作台持续编辑。系统 ID、因果事件历史与已经发生的存档事实保持独立只读，因此修改内容本身不会篡改某次游玩中已经发生的事情。
 
-### 故事存档与时间线
+Library 的新建流程刻意只负责结构：它仅询问形成有效空白文件所需的最小身份与引用。题材、性格、正文、Scene 与因果规则会保持为空，直到你明确填写或导入。带有创作立场的辅助能力可以由可选扩展提供，但不会成为内核里的隐藏策略。
 
-Story 是可反复游玩的作品；开始故事后创建 Playthrough；每个 Playthrough 可以拥有多个具名 Timeline。“What if?” 分支不会覆盖原历史。
+这样，创作者写下的故事与玩家的对话、存档状态彼此分离。你可以继续阅读[可编辑 Story 文件](docs/STORY_SOURCES.md)，或直接查看仓库中的[多文件示例](examples/stories/midnight-at-the-glass-observatory/story.tavern.json)。
 
-### 玩家 Journal
+## 隐私与真实边界
 
-Journal 把底层状态转换成玩家容易理解的内容：
+- 默认运行数据保存在 `~/.harness-tavern`。
+- Provider Key 会加密保存，并且不会进入便携备份。
+- 公开预览使用单独生成的玩家安全快照，不会读取完整创作者数据。
+- 可导入扩展必须是声明式内容；包含可执行字段时会被拒绝。
+- Harness Tavern 不会按应用字符数静默切掉已经接受的叙事。如果上游 Provider 返回不完整结果，本轮会暂停，而不是把残缺文字当成完整回复展示。
 
-- 当前场景；
-- 剧情回顾；
-- 未解决线索；
-- 已知事实；
-- 关系描述；
-- 玩家可见的世界状态；
-- 时间线。
+0.13.0 是一个**本地优先、单 Owner Beta**。它已经可以用于真实的本地角色扮演、内容编辑、迁移和继续开发，但不是经过独立安全审计的多租户托管服务。把它暴露到本机以外之前，请阅读[安全设计](docs/SECURITY.md)和[运维指南](docs/OPERATIONS.md)。
 
-Director-only Lore 与角色私人知识不会出现在玩家 Journal 中。
+## 文档入口
 
-## 创作者旅程
+| 我想要…… | 从这里开始 |
+|---|---|
+| 安装并使用酒馆 | [开始使用](docs/GETTING_STARTED.md) |
+| 编辑角色或故事 | [内容编辑指南](docs/CREATOR_GUIDE.md) |
+| 从 SillyTavern 迁移 | [迁移指南](docs/MIGRATION.md) |
+| 直接编辑 Story 文件 | [Story Source 指南](docs/STORY_SOURCES.md) |
+| 理解项目或参与开发 | [开发者指南](docs/DEVELOPMENT.md) |
+| 浏览全部文档 | [文档中心](docs/README.md) |
 
-创作者不需要手写 JSON、Prompt、Schema 或 Harness 配置。
+## 社区
 
-### Quick Character
+- 安装问题、设计讨论和使用想法请前往 [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions)。
+- 可复现缺陷或边界清晰的功能建议请提交到 [GitHub Issues](https://github.com/HenryQUQ/harness-tavern/issues)。
+- 提交 Pull Request 前，请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- 安全问题请按照 [SECURITY.md](SECURITY.md) 私下报告。
 
-用普通语言描述想认识的人，系统生成可编辑草稿，包括语气、关系起点、第一句话、目标、秘密与边界。高级字段全部是可选项。
-
-### Quick Story
-
-描述想体验的故事，再选择友好的模板、角色数量、类型、氛围和玩家身份。系统生成：
-
-- Hook 与 Premise；
-- 相互区分的角色草稿；
-- 每名角色的公开与私人知识；
-- 世界规则；
-- 开场与场景结构；
-- 内容提示；
-- Remix 策略。
-
-生成结果先保存为草稿，创作者确认后才发布，并可立即 Playtest。
-
-### 可复用模板
-
-已有 Story 可以一键保存为声明式 Story Template，在 Create 中重复使用，不需要开发插件代码。
-
-## 分享
-
-Harness Tavern 提供三种分享层级。
-
-### 公开预览
-
-可撤销的浏览器页面，只包含玩家安全信息：标题、Hook、公开角色介绍、标签、内容提示和公开 Lore。不会包含角色私人知识、Director-only Lore、Author Notes、模型设置或本地内部 ID。
-
-### 完整可玩 Tavern Pack
-
-版本化 `.tavernpack.json` 文件，包含 Story 和依赖角色。为了让故事能够正常运行，完整包会包含创作者私人知识，因此它属于可编辑源内容，不应当被当作公开展示页面。
-
-### 便携链接
-
-较小内容可压缩进 URL Fragment。接收方会先看到内容预览和冲突，再决定是否导入；较大内容自动改用下载文件。
-
-导入始终提供预览，并明确选择冲突策略：
-
-- **Copy**：保留现有内容并创建副本；
-- **Replace**：更新匹配内容；
-- **Skip**：复用已有匹配内容。
-
-SillyTavern Character Card V2 风格 JSON 也通过相同的预览与导入流程处理。
-
-## 安全扩展
-
-扩展格式只允许声明式内容：
-
-- 角色模板；
-- 故事模板；
-- 输入框快捷动作；
-- 主题 Token。
-
-包含 script、JavaScript、module、entrypoint 或 eval 等可执行字段的扩展会被拒绝。这样既方便社区分享，又让用户能够理解安全边界。
-
-## AI 连接
-
-不连接外部模型也可以使用完整应用。高级用户可以在 **Settings → AI Connections** 中配置：
-
-- OpenRouter，包括 OAuth/PKCE 账户连接与路由偏好；
-- OpenAI-compatible 服务；
-- Anthropic；
-- Gemini；
-- Azure OpenAI；
-- Ollama、LM Studio、vLLM、llama.cpp、LocalAI；
-- 三十多个 Provider 预设。
-
-聊天标题栏会显示当前 AI 服务和模型。点击即可在已连接的 API 之间切换、刷新或手动输入模型 ID，并套用 **平衡、电影感、聚焦** 三种内置回复预设。每个对话还可以单独调整自定义 AI 指令、带入的历史消息数、思考强度、回复长度、角色主动性、多角色节奏、随机度、Top P、Top K、Min P、频率/存在/重复惩罚、随机种子、停止序列，以及有边界的 Provider 专属 JSON 参数。包括思考强度在内的全部设置都可以保存成新预设，也可以更新已有的自定义预设。
-
-预设区可以直接导入 SillyTavern Chat Completion 和 Text Completion JSON。应用会先预览逐项映射，把启用的 prompt 块转换成当前对话指令，保留兼容的采样器与推理强度，并清楚列出不会导入的字段；API/模型凭据和输出 Token 上限不会被带入。回复长度只是写作风格，不会转换成人为 Token 上限；输出容量交给所选服务管理，结构化回复不完整时会安全失败，不会把残缺数据显示成角色台词。
-
-应用只自动准备角色、故事和离线演示模型，不再自动创建演示对话。连接真实 API 后，新对话会优先使用真实服务；内置 Mock 仅在没有其他可用连接时作为离线回退。
-
-API Key 会加密保存。除非 Provider 提供正式授权流程，否则消费者网页订阅不会被冒充成 API 凭据。
-
-## 架构
-
-```text
-玩家 / 创作者界面
-        ↓
-面向人的应用服务
-(Home、Journal、引导创作、分享、扩展)
-        ↓
-Tavern 领域
-(Character、Persona、Story、Playthrough、Timeline、Cast)
-        ↓
-统一回合运行时
-(Context → 模型 → 输出验证 → 状态事务)
-        ↓
-Append-only Events + 确定性投影 + SQLite
-```
-
-默认产品不包含 Bash、仓库编辑、PTY、LSP 或 Coding Agent Prompt。DeepSeek Harness 是可选的下游集成底座，不是用户看到的产品心智。
-
-详细文档：
-
-- [体验架构](docs/EXPERIENCE_ARCHITECTURE.md)
-- [分享与扩展](docs/SHARING_AND_EXTENSIONS.md)
-- [创作者指南](docs/CREATOR_GUIDE.md)
-- [系统架构](docs/ARCHITECTURE.md)
-- [API](docs/API.md)
-- [安全设计](docs/SECURITY.md)
-- [迁移说明](docs/MIGRATION.md)
-- [开发指南](docs/DEVELOPMENT.md)
-- [运维指南](docs/OPERATIONS.md)
-- [架构决策](docs/adr/README.md)
-
-## 验证
-
-```bash
-npm run check
-npm run test:coverage
-npm run verify:journey
-npm run doctor
-npm run release
-```
-
-`npm run verify` 是本地合并门槛。GitHub Actions 会执行相同的源码检查、覆盖率阈值、首次使用 Journey、隔离数据库诊断和依赖审计。Release 会完成冷解包测试、Git Bundle 校验、校验和，以及可选的完整 DeepSeek Harness 源码快照，但不会改写 Git 历史或标签。
-
-## 容器运行
-
-容器默认使用非特权用户，并把持久数据放在 `/data` Volume。非 Loopback 启动必须设置访问 Token。
-
-```bash
-export HT_ACCESS_TOKEN="$(openssl rand -hex 32)"
-docker compose up --build -d
-```
-
-通过反向代理暴露服务前，请阅读[运维指南](docs/OPERATIONS.md)。
-
-## 当前边界
-
-0.12.0 是可实际用于角色聊天、故事创作、分享、评估和继续开发的本地单 Owner Beta。它不是经过独立安全审计的多租户 SaaS；多用户 RBAC、计费、集中内容治理、分布式数据库、原生移动客户端和托管市场不在本版本范围内。
+Harness Tavern 由独立维护者维护，并采用 [MIT License](LICENSE)。

@@ -1,222 +1,145 @@
-# Harness Tavern
+<p align="center">
+  <img src="public/icon.svg" width="104" height="104" alt="Harness Tavern logo">
+</p>
 
-[![CI](https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml/badge.svg)](https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-6f5bd3.svg)](LICENSE)
+<h1 align="center">Harness Tavern</h1>
 
-[中文说明](README.zh-CN.md)
+<p align="center">
+  <strong>Roleplay worlds that remember what actually happened.</strong><br>
+  A local-first home for persistent characters, causal stories, and AI freedom.
+</p>
 
-Harness Tavern is a **Tavern-first** application for persistent character chat and roleplay. The user experience is built around meeting characters, continuing relationships, entering stories, and creating shareable worlds. Harness concepts—events, state transactions, model routing, private knowledge, and replay—stay behind the scenes.
+<p align="center">
+  <a href="https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml"><img src="https://github.com/HenryQUQ/harness-tavern/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-c792ea.svg" alt="MIT license"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-22.19%2B-82d9c8.svg" alt="Node.js 22.19 or newer"></a>
+  <img src="https://img.shields.io/badge/version-0.13.0-ffba66.svg" alt="Version 0.13.0">
+</p>
 
-Version: **0.12.0**
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="docs/GETTING_STARTED.md">Get started</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="https://github.com/HenryQUQ/harness-tavern/discussions">Community</a>
+</p>
 
-## Start in one command
+---
 
-Requirements: Node.js 22.19 or newer.
+Harness Tavern is for people who want a character or story to remain coherent after the chat window becomes long. It remembers doors that were opened, promises that were made, secrets that are still private, and intentions that have not yet been resolved.
+
+The conversation is how you experience the story. It is not the database of truth.
+
+## Why it feels different
+
+Most roleplay frontends ask a model to produce a plausible next message from text history. Harness Tavern first decides what the world allows, records the result, shows each character only what they can observe, and then asks the model to narrate it.
+
+```mermaid
+flowchart LR
+    A[You choose an action] --> B[World rules check it]
+    B --> C[Facts are recorded]
+    C --> D[Characters observe]
+    D --> E[The scene is narrated]
+```
+
+That gives you:
+
+- **Persistent worlds** — facts, relationships, goals, and commitments survive model changes.
+- **Characters with direction** — ongoing intentions continue until events actually resolve them.
+- **Fair player control** — the AI cannot invent your dialogue, thoughts, feelings, or a successful action for you.
+- **Private knowledge** — a character does not automatically know another character's secrets.
+- **Real consequences** — impossible actions can fail without the narration quietly pretending they worked.
+- **Safe branches** — explore a “what if?” timeline without overwriting the original story.
+
+## What you can do
+
+| Experience | What it means for you |
+|---|---|
+| Meet a character | Start with an editable character profile and keep the relationship across sessions. |
+| Enter a story | Play narrator-only, single-character, or ensemble stories through the same simple interface. |
+| Edit anything you authored | Reopen any Character or Story and change its voice, private intent, Cast, Lore, Scenes, Actions, Agendas, or metadata. |
+| Author without a fixed generator | Start from a blank standard structure or import a portable file, then edit every field directly. The core never expands a brief with a built-in creative prompt. |
+| Choose any AI | Switch between connected APIs and models without changing your characters or saves. |
+| Tune the response | Use presets for style, sampling, reasoning strength, initiative, and context behavior. |
+| Bring your library | Preview and migrate compatible SillyTavern characters, chats, groups, worlds, personas, and presets. |
+| Share your work | Export editable Story files, playable Tavern packs, public previews, or portable playthroughs. |
+
+## Start locally
+
+You need [Node.js 22.19 or newer](https://nodejs.org/) and Git.
 
 ```bash
+git clone https://github.com/HenryQUQ/harness-tavern.git
+cd harness-tavern
+npm ci
 npm start
 ```
 
-Open `http://127.0.0.1:8787`.
+Open **http://127.0.0.1:8787**.
 
-A built-in offline demo model, a default player Persona, three characters, and the multi-character story **Midnight at the Glass Observatory** are seeded automatically. A new user can receive a first roleplay response without understanding API keys, providers, prompts, or agent modes.
+No API key is needed for the first visit. Harness Tavern includes an offline demo connection, a default Persona, three example characters, and the ensemble story **Midnight at the Glass Observatory**. It does not create a dummy conversation.
 
-## Product principles
+For a guided walkthrough, connection setup, migration, backups, and troubleshooting, read [Getting started](docs/GETTING_STARTED.md).
 
-- **Tavern language, not infrastructure language.** Primary navigation is Home, Chats, Library, Create, and Settings.
-- **Progressive disclosure.** AI connections, routing, response depth, usage, and creator-only state are available, but never block the first experience.
-- **The player owns the player.** The runtime does not invent the user’s dialogue, thoughts, feelings, identity, or successful actions.
-- **Private knowledge stays private.** Player Journal, public share previews, and creator inspection use separate projections.
-- **Share before platform lock-in.** Characters and stories can move as versioned Tavern packs or portable share links.
-- **Extend without executing strangers’ code.** Imported extensions are declarative templates, quick actions, and themes.
+## Your first few minutes
 
-## Player journey
+1. Tell the Tavern what it should call you.
+2. Choose **Meet a character**, **Enter a story**, or open **Library → New** for a blank Character or Story.
+3. Try an action and open the Story Engine panel to see known facts, visible action results, ongoing intent, and timelines.
+4. When you are ready, open **Settings → AI Connections** to add your preferred service.
+5. Use the compact model menu inside a chat to adjust its preset, thinking strength, response style, API, or model.
 
-### First visit
+The built-in demo keeps onboarding simple. A real provider is optional and can be added later without recreating your library.
 
-The onboarding flow asks only:
+## Bring your SillyTavern library
 
-1. What should the Tavern call you?
-2. Would you like to meet a character, enter a story, or create something?
+Open **Settings → Import from SillyTavern** and select a Character Card, backup ZIP, or user-data directory. Harness Tavern always previews the plan before writing anything.
 
-It does not ask for a provider or model. The built-in model is selected automatically.
+It can migrate compatible Characters, Chats, Group Chats, Groups, World Info, Personas, and generation presets. Secrets are excluded. Extensions, Quick Replies, themes, and vector indexes may be inventoried, but untrusted code is never executed.
 
-### Home
+See the full [migration guide](docs/MIGRATION.md).
 
-Home shows:
+## Stories remain yours
 
-- recent conversations and playthroughs with a readable recap;
-- characters ready to meet;
-- stories ready to enter;
-- unfinished creator drafts;
-- direct entry to the sample ensemble story.
+Every Story has an editable `harness-tavern-story/v2` source:
 
-### Character chat
+- use one self-contained JSON file for a compact Story;
+- use a folder of Character, Lorebook, Markdown Scene, Action, and Agenda files for a larger project;
+- edit with the built-in editor or any text editor;
+- validate and version the files with Git;
+- export without provider credentials or local database identifiers.
 
-Open a Character Profile, select the Persona you want to use, then start or continue a conversation. The character’s identity, voice, goals, boundaries, memories, and relationship state persist independently from the selected model.
+The visual Character and Story workspaces cover the complete authored model. System identifiers, causal event history, and saved playthrough facts remain separate and read-only, so editing the work never rewrites what already happened in a playthrough.
 
-### Story playthrough
+Library creation is intentionally structural: it asks only for the minimum identity and references needed to create a valid blank file. Genre, personality, prose, Scenes, and causal rules stay empty until you explicitly author or import them. Opinionated assistance can live in an optional extension, but it is not a hidden policy of the core.
 
-A Story is reusable content. Starting it creates a Playthrough, and each Playthrough can contain multiple named Timelines. “What if?” branches do not overwrite the original history.
+This keeps authored content separate from conversations and playthrough state. Learn more in [Editable Story sources](docs/STORY_SOURCES.md) or open the [included multi-file example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
 
-### Player Journal
+## Privacy and honest limits
 
-The Journal translates runtime state into player language:
+- Runtime data lives in `~/.harness-tavern` by default.
+- Provider keys are encrypted at rest and are excluded from portable backups.
+- Public previews contain a separate player-safe snapshot, not the private creator record.
+- Imported extensions are declarative; executable fields are rejected.
+- Harness Tavern does not silently cut accepted narration at an application character limit. If a provider returns an incomplete result, the turn is suspended instead of displaying partial prose as a completed reply.
 
-- current scene;
-- recap;
-- unresolved threads;
-- known facts;
-- relationship descriptions;
-- visible world state;
-- timelines.
+Version 0.13.0 is a **local-first, single-owner beta**. It is ready for real local roleplay, content authoring, migration, and continued development, but it is not an audited multi-tenant hosted service. Read [Security](docs/SECURITY.md) and [Operations](docs/OPERATIONS.md) before exposing it beyond your own machine.
 
-It deliberately omits Director-only lore and private character knowledge.
+## Documentation
 
-## Creator journey
+| I want to… | Start here |
+|---|---|
+| Install and use the Tavern | [Getting started](docs/GETTING_STARTED.md) |
+| Author a Character or Story | [Content authoring guide](docs/CREATOR_GUIDE.md) |
+| Move from SillyTavern | [Migration guide](docs/MIGRATION.md) |
+| Edit Story files directly | [Story source guide](docs/STORY_SOURCES.md) |
+| Understand the project or contribute | [Developer guide](docs/DEVELOPMENT.md) |
+| Browse every document | [Documentation home](docs/README.md) |
 
-Creators do not need to write JSON, prompts, schemas, or Harness configuration.
+## Community
 
-### Quick Character
+- Ask setup and design questions in [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions).
+- Report reproducible bugs or propose scoped features in [GitHub Issues](https://github.com/HenryQUQ/harness-tavern/issues).
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+- Report security issues privately through the process in [SECURITY.md](SECURITY.md).
 
-Describe the person you want to meet in ordinary language. Harness Tavern produces an editable draft containing voice, relationship premise, first message, goals, secrets, and boundaries. Advanced fields remain optional.
-
-### Quick Story
-
-Describe the desired experience, choose a friendly template, cast size, genre, tone, and player role. The guided creator produces:
-
-- a hook and premise;
-- distinct character drafts;
-- public and private cast knowledge;
-- world rules;
-- opening scene and scene outline;
-- content notes;
-- remix policy.
-
-The result remains a draft until the creator reviews and publishes it. It can then be play-tested immediately.
-
-### Reusable templates
-
-A creator can save an existing Story as a declarative Story Template. The template becomes available in Create without adding executable code.
-
-## Sharing
-
-Harness Tavern separates editable source from distribution and public preview.
-
-### Editable Story source
-
-Every published single-character or multi-character Story has a canonical `harness-tavern-story/v1` source. A compact Story is one self-contained `*.story.tavern.json` file. A larger Story can use `story.tavern.json` plus relative Character Card, Lorebook and Markdown scene files. These files use stable keys rather than database IDs and can be edited directly, validated, versioned in Git and recompiled into SQLite.
-
-See [Editable Story sources](docs/STORY_SOURCES.md) and the [checked-in project example](examples/stories/midnight-at-the-glass-observatory/story.tavern.json).
-
-### Public preview
-
-A revocable browser page containing only player-safe material: title, hook, public cast descriptions, tags, content notes, and public lore. It excludes private cast context, secrets, Director-only lore, author notes, provider settings, and local IDs.
-
-### Playable Tavern pack
-
-A versioned `.tavernpack.json` distribution snapshot containing the Story and required Characters. It preserves signed import compatibility between Tavern installations, but its export timestamp, integrity digest and remapped runtime identifiers make it an artifact rather than an authoring source.
-
-### Portable link
-
-Small packs can be compressed into a URL fragment. The receiving Tavern previews the contents and conflicts before import. Larger content falls back to the downloadable pack.
-
-Import always supports a preview step and explicit conflict strategy:
-
-- **Copy**: keep existing content and create a separate copy;
-- **Replace**: update matching local content;
-- **Skip**: reuse matching local content.
-
-SillyTavern Character Card V2-style JSON is accepted through the same preview/import flow.
-
-## Safe extensions
-
-The extension format is deliberately declarative. An imported extension can contribute:
-
-- character templates;
-- story templates;
-- composer quick actions;
-- theme tokens.
-
-Executable fields such as scripts, JavaScript, modules, entrypoints, or eval are rejected. This makes community content easy to share while keeping the trust boundary understandable.
-
-## AI connections
-
-The application works without an external provider. Under **Settings → AI Connections**, advanced users can add:
-
-- OpenRouter, including OAuth/PKCE account authorization and routing preferences;
-- OpenAI-compatible providers;
-- Anthropic;
-- Gemini;
-- Azure OpenAI;
-- local Ollama, LM Studio, vLLM, llama.cpp, and LocalAI connections;
-- more than thirty provider presets.
-
-The chat header shows the active AI service and model. Open it to switch connected APIs, refresh or type a model ID, apply the built-in Balanced, Cinematic, or Focused response preset, edit conversation-specific AI instructions and context history, tune reasoning strength, response behaviour, temperature, Top P, Top K, Min P, frequency/presence/repetition penalties, seed and stop sequences, or add bounded provider-specific JSON options. Every setting—including reasoning strength—can be saved in or used to update a reusable custom preset.
-
-SillyTavern Chat Completion and Text Completion preset JSON files can be imported from the same preset section. Tavern previews the exact mapping first, translates enabled prompt blocks into conversation instructions, preserves compatible samplers and reasoning effort, and identifies fields it will not import. API/model credentials and output-token caps are intentionally excluded. Response length remains a writing-style instruction rather than an artificial token ceiling: Harness Tavern leaves output capacity to the selected provider and rejects incomplete structured replies instead of displaying truncated data.
-
-Characters, stories, and the offline demo connection are seeded, but a demo conversation is no longer created automatically. Once a real API is connected, new conversations prefer it; the built-in Mock remains an offline fallback only when no other enabled connection exists.
-
-API keys are encrypted at rest. Consumer website subscriptions are not treated as API credentials unless the provider offers an official authorization flow.
-
-## Architecture
-
-```text
-Player / Creator surfaces
-        ↓
-Human-facing application services
-(Home, Journal, Guided Creator, Sharing, Extensions)
-        ↓
-Tavern domain
-(Character, Persona, Story, Playthrough, Timeline, Cast)
-        ↓
-Unified turn runtime
-(Context → model → validated envelope → state transaction)
-        ↓
-Append-only events + deterministic projections + SQLite
-```
-
-The default product has no Bash, repository editing, PTY, LSP, or coding-agent prompt. DeepSeek Harness remains an optional downstream integration target, not the visible product model.
-
-See:
-
-- [Experience architecture](docs/EXPERIENCE_ARCHITECTURE.md)
-- [Sharing and extensions](docs/SHARING_AND_EXTENSIONS.md)
-- [Creator guide](docs/CREATOR_GUIDE.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Editable Story sources](docs/STORY_SOURCES.md)
-- [API](docs/API.md)
-- [Security](docs/SECURITY.md)
-- [Migration](docs/MIGRATION.md)
-- [Development](docs/DEVELOPMENT.md)
-- [Operations](docs/OPERATIONS.md)
-- [Architecture decisions](docs/adr/README.md)
-
-## Validation
-
-```bash
-npm run check
-npm run test:coverage
-npm run verify:journey
-npm run doctor
-npm run story:validate -- examples/stories/midnight-at-the-glass-observatory
-npm run release
-```
-
-`npm run verify` is the local merge gate. GitHub Actions runs the same source checks, coverage thresholds, fresh-user journey, isolated database diagnosis, and dependency audit. The release command performs cold extraction tests, Git bundle verification, checksums, and optional full DeepSeek Harness snapshot assembly without modifying Git history or tags.
-
-## Container
-
-The supplied container runs as an unprivileged user with a persistent `/data` volume. Non-loopback startup requires an access token.
-
-```bash
-export HT_ACCESS_TOKEN="$(openssl rand -hex 32)"
-docker compose up --build -d
-```
-
-See [Operations](docs/OPERATIONS.md) before exposing the service through a reverse proxy.
-
-## Deployment boundary
-
-0.12.0 is a local-first, single-owner beta suitable for real roleplay, story creation, sharing, evaluation, and continued product development. It is not presented as an independently security-audited, multi-tenant hosted service. Multi-user RBAC, billing, central moderation, distributed persistence, native mobile clients, and a hosted marketplace remain outside this release.
+Harness Tavern is independently maintained and released under the [MIT License](LICENSE).

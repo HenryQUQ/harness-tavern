@@ -45,6 +45,7 @@ export function thinkingPlan(intensity, visibleTokens = null) {
     totalOutputTokens: visible === null ? null : visible + reasoningTokens,
     openRouterEffort: { none: null, low: 'low', medium: 'medium', high: 'high', max: 'high' }[level],
     openAiEffort: { none: null, low: 'low', medium: 'medium', high: 'high', max: 'high' }[level],
+    deepSeekEffort: { none: null, low: 'low', medium: 'high', high: 'high', max: 'max' }[level],
     promptGuidance: {
       none: 'Respond naturally and directly. Do not expose hidden reasoning.',
       low: 'Pause briefly to preserve persona and continuity before responding. Do not expose hidden reasoning.',

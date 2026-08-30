@@ -1,6 +1,6 @@
 {
   "name": "harness-tavern",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "type": "module",
   "description": "A nontechnical, shareable and extensible Tavern for persistent character chat and roleplay.",
@@ -31,6 +31,7 @@
     "test": "node --test --test-reporter=spec tests/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage '--test-coverage-include=src/**/*.js' --test-coverage-lines=85 --test-coverage-functions=80 --test-coverage-branches=65 tests/*.test.js",
     "verify:journey": "node scripts/verify-user-journey.js",
+    "verify:deepseek": "node scripts/verify-deepseek-causal.js",
     "ci": "npm run check && npm run test:coverage && npm run verify:journey",
     "verify": "npm run ci && npm run doctor",
     "audit": "npm audit --audit-level=high",
@@ -42,6 +43,7 @@
     "release": "node scripts/build-release.js"
   },
   "dependencies": {
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "fflate": "0.8.2"
   }
 }

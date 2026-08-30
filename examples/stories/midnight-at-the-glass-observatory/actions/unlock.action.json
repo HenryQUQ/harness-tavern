@@ -1,0 +1,24 @@
+{
+  "label": "Unlock a route",
+  "description": "Unlock an authored route with an item the player possesses.",
+  "actor": "user",
+  "parameters_schema": {
+    "type": "object",
+    "required": ["target", "tool"],
+    "properties": {
+      "target": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+      "tool": { "type": "string", "pattern": "^[a-z0-9_-]+$" }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    { "path": "world.doors.{{params.target}}.locked", "operator": "eq", "value": true, "message": "That route is not currently locked." },
+    { "path": "world.inventory.user", "operator": "contains", "value": "$params.tool", "message": "You do not possess the required tool." }
+  ],
+  "effects": [
+    { "op": "set", "path": "world.doors.{{params.target}}.locked", "value": false }
+  ],
+  "observations": [
+    { "audience": ["public"], "template": "The lock on {{params.target}} releases with a recorded click; the route remains closed until a separate open action succeeds." }
+  ]
+}

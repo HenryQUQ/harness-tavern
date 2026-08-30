@@ -9,7 +9,7 @@ await test('bootstrap exposes the Tavern-first experience, model choices, and en
   const { baseUrl } = await testApp(t)
   const { response, body } = await jsonRequest(baseUrl, '/api/bootstrap')
   assert.equal(response.status, 200)
-  assert.equal(body.version, '0.12.0')
+  assert.equal(body.version, '0.13.0')
   assert.deepEqual(body.thinking_intensities, ['auto', 'none', 'low', 'medium', 'high', 'max'])
   assert.ok(body.provider_presets.length >= 30)
   assert.equal(body.generation_presets.length, 3)
@@ -18,10 +18,17 @@ await test('bootstrap exposes the Tavern-first experience, model choices, and en
   assert.equal(body.sample.story_id, SAMPLE_IDS.story)
   assert.equal(body.sample.character_ids.length, 3)
   assert.equal(body.conversations.some(item => 'mode' in item), false)
+  const sampleConversation = body.conversations.find(item => item.id === SAMPLE_IDS.conversation)
+  assert.equal(sampleConversation.group.kind, 'story')
+  assert.equal(sampleConversation.group.id, SAMPLE_IDS.story)
+  assert.equal(sampleConversation.group.cast.length, 3)
   assert.ok(body.home.continue.length >= 1)
-  assert.ok(body.capabilities.includes('guided-creator'))
+  assert.ok(body.capabilities.includes('framework-first-content'))
+  assert.ok(body.capabilities.includes('explicit-content-lifecycle'))
   assert.ok(body.capabilities.includes('portable-sharing'))
-  assert.ok(body.contributions.quick_actions.length >= 1)
+  assert.deepEqual(body.content_types.map(item => item.kind), ['character', 'story'])
+  assert.ok(body.content_types.every(item => item.creation_mode === 'explicit' && item.generated === false))
+  assert.deepEqual(body.contributions.quick_actions, [])
 })
 
 await test('health, static UI, and public share page include security headers', async t => {
@@ -64,6 +71,23 @@ await test('starts without dummy conversations unless the test fixture is explic
   assert.equal(body.conversations.length, 0)
   assert.equal(body.sample.conversation_id, null)
   assert.ok(body.characters.length >= 3)
+})
+
+await test('bootstrap groups standalone chats by their public character identity', async t => {
+  const { app, baseUrl } = await testApp(t)
+  const conversation = app.repository.createConversation({
+    title: 'A quiet conversation with Mira',
+    character_ids: [SAMPLE_IDS.mira],
+    persona_id: SAMPLE_IDS.persona,
+    skip_opening: true,
+  })
+  const { body } = await jsonRequest(baseUrl, '/api/bootstrap')
+  const item = body.conversations.find(candidate => candidate.id === conversation.id)
+  assert.equal(item.group.kind, 'character')
+  assert.equal(item.group.id, SAMPLE_IDS.mira)
+  assert.equal(item.group.title, app.repository.getCharacter(SAMPLE_IDS.mira).name)
+  assert.deepEqual(item.group.cast.map(member => member.id), [SAMPLE_IDS.mira])
+  assert.equal('private_context' in item.group.cast[0], false)
 })
 
 await test('prefers a connected real API and its default model for new conversations', async t => {
@@ -130,6 +154,65 @@ await test('streams a complete multi-character turn over SSE', async t => {
   assert.doesNotMatch(text, /event: turn.failed/)
 })
 
+await test('player APIs expose causal outcomes without private effect paths or control plans', async t => {
+  const { app, baseUrl } = await testApp(t)
+  const turn = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}/turn`, {
+    method: 'POST',
+    body: JSON.stringify({ content: 'Take the archive key.', idempotency_key: 'http-private-receipt' }),
+  })
+  assert.equal(turn.response.status, 200)
+  assert.equal(turn.body.action_receipts[0].status, 'resolved')
+  assert.equal(turn.body.action_receipts[0].changed_fact_count, 2)
+  assert.equal('effects' in turn.body.action_receipts[0], false)
+  assert.equal('actions' in turn.body, false)
+
+  const view = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}`)
+  assert.equal('effects' in view.body.causal.recent_receipts[0], false)
+  const loop = await jsonRequest(baseUrl, `/api/control-loops/${turn.body.loop_id}`)
+  assert.equal('result' in loop.body, false)
+  assert.equal('included' in loop.body.context_manifests.control, false)
+  const narrationManifest = Object.values(loop.body.context_manifests.narration)[0]
+  assert.equal(narrationManifest.policy, 'provider-managed-no-tavern-ceiling')
+  assert.equal('included' in narrationManifest, false)
+
+  const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'action.resolved', actorId: SAMPLE_IDS.rowan,
+    payload: { status: 'resolved', action_id: 'npc-private-action', action_type: 'speak', actor_id: SAMPLE_IDS.rowan, outcome: 'succeeded', reason: 'PRIVATE_NPC_AGENDA_REASON', effects: [] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'observation.created', actorId: SAMPLE_IDS.rowan,
+    payload: { id: 'npc-private-observation', action_id: 'npc-private-action', actor_id: SAMPLE_IDS.rowan, audience: ['director'], content: 'PRIVATE_NPC_OBSERVATION', kind: 'result' },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'action.resolved', actorId: SAMPLE_IDS.mira,
+    payload: { status: 'resolved', action_id: 'npc-public-action', action_type: 'speak', actor_id: SAMPLE_IDS.mira, outcome: 'succeeded', reason: 'PRIVATE_MOTIVE_BEHIND_PUBLIC_ACTION', effects: [] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'observation.created', actorId: SAMPLE_IDS.mira,
+    payload: { id: 'npc-public-observation', action_id: 'npc-public-action', actor_id: SAMPLE_IDS.mira, audience: ['public'], content: 'Mira speaks.', kind: 'result' },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'agenda.created', actorId: SAMPLE_IDS.mira,
+    payload: { id: 'public-agenda', owner_id: SAMPLE_IDS.mira, objective: 'Keep the archive safe.', priority: 1, visibility: 'public', complete_when: [{ path: 'PRIVATE_AGENDA_PATH', equals: true }] },
+  })
+  app.db.appendEvent({
+    conversationId: conversation.id, branchId: conversation.current_branch_id, type: 'agenda.evaluated', actorId: SAMPLE_IDS.mira,
+    payload: { agenda_id: 'public-agenda', decision: 'defer', reason: 'PRIVATE_AGENDA_REASON' },
+  })
+  const privateSafeView = await jsonRequest(baseUrl, `/api/conversations/${SAMPLE_IDS.conversation}`)
+  assert.equal(privateSafeView.body.causal.recent_receipts.some(item => item.action_id === 'npc-private-action'), false)
+  const publicNpcReceipt = privateSafeView.body.causal.recent_receipts.find(item => item.action_id === 'npc-public-action')
+  assert.ok(publicNpcReceipt)
+  assert.equal('reason' in publicNpcReceipt, false)
+  const publicAgenda = privateSafeView.body.causal.active_agendas.find(item => item.id === 'public-agenda')
+  assert.deepEqual(publicAgenda, {
+    id: 'public-agenda', owner_id: SAMPLE_IDS.mira, objective: 'Keep the archive safe.', priority: 1,
+    status: 'active', visibility: 'public', evaluation_count: 1,
+  })
+  assert.doesNotMatch(JSON.stringify(privateSafeView.body), /PRIVATE_(?:NPC|MOTIVE|AGENDA)/)
+})
+
 await test('creates a provider connection through the advanced settings API', async t => {
   const { baseUrl } = await testApp(t)
   const created = await jsonRequest(baseUrl, '/api/provider-connections', {
@@ -162,15 +245,28 @@ await test('browser surface is Tavern-first and keeps technical controls out of 
   const root = fileURLToPath(new URL('../public/', import.meta.url))
   const html = readFileSync(`${root}/index.html`, 'utf8')
   const js = readFileSync(`${root}/app.js`, 'utf8')
+  const css = readFileSync(`${root}/styles.css`, 'utf8')
   assert.match(html, />Home</)
   assert.match(html, />Chats</)
   assert.match(html, />Library</)
-  assert.match(html, />Create</)
+  assert.doesNotMatch(html, />Create</)
+  assert.match(html, /data-action="new-content"/)
   assert.match(html, /AI services/i)
   assert.doesNotMatch(html, /data-view=["']models["']/i)
   assert.doesNotMatch(html, />State</i)
   assert.doesNotMatch(js, /name:\s*["']max_output_tokens["']/)
   assert.match(js, /Import SillyTavern/)
+  assert.match(js, /\/api\/library\/items/)
+  assert.doesNotMatch(js, /quickCreate|Describe a story|Create editable draft/)
+  assert.match(html, /id="conversationRail"/)
+  assert.match(html, /id="conversationGroups"/)
+  assert.match(js, /function groupedConversations\(/)
+  assert.match(js, /function openNewChatChooser\(/)
+  assert.match(js, /\['character', uiText\('角色'/)
+  assert.match(js, /\['story', uiText\('故事'/)
+  assert.match(js, /class: 'quick-settings-grid'/)
+  assert.match(css, /\.conversation-row\.active/)
+  assert.match(css, /\.drawer\.modeless/)
   assert.match(js, /name:\s*["']thinking_intensity["']/)
   assert.match(js, /numericField\(["']frequency_penalty["']/)
   for (const legacy of ['direct', 'stateful', 'agentic', 'adaptive']) {

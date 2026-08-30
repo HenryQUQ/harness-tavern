@@ -84,10 +84,14 @@ const STORY = {
   initial_state: {
     scene: { id: 'central-hall', title: 'The powerless orrery', location: 'Central Hall', time: '11:30 PM' },
     clock: { minutes_to_alignment: 30 },
-    doors: { archive: { locked: false }, west_hall: { locked: true, requires: 'warden authority or another credible method' }, lens_chamber: { locked: true } },
+    doors: { archive: { locked: false, open: true }, west_hall: { locked: true, open: false, requires: 'archive_key or another authored method' }, lens_chamber: { locked: true, open: false } },
     observatory: { authority: 'revoked', corridor_shift: 0 },
     story: { open_threads: ['Who removed the celestial lens?', 'Why did the observatory revoke Lyra’s authority?', 'What is hidden in Rowan’s scarf?'] },
     inventory: { public: ['Mira’s archive ledger', 'Lyra’s iron keys'], user: [] },
+    items: {
+      archive_key: { label: 'Archive key', location: 'central-hall', portable: true },
+      lens_fragment: { label: 'Celestial lens fragment', location: 'char_rowan_ash', portable: false },
+    },
   },
   author_notes: 'Let the three characters disagree naturally. Never use private character knowledge as shared group knowledge. When the user attempts an impossible action, offer a consequence or a credible route rather than silently granting success.',
   content_warnings: ['Confinement', 'Mild peril', 'Themes of memory and identity'],
@@ -97,6 +101,72 @@ const STORY = {
     { id: 'archive', title: 'The rewritten ledger', location: 'Archive', time: 'Before midnight', objective: 'Discover that the observatory has changed its own records.', active_character_ids: [SAMPLE_IDS.mira, SAMPLE_IDS.rowan, SAMPLE_IDS.lyra] },
     { id: 'lens-chamber', title: 'The choice beneath the stars', location: 'Lens Chamber', time: 'Alignment', objective: 'Choose what to restore, open or leave behind.', active_character_ids: [SAMPLE_IDS.mira, SAMPLE_IDS.rowan, SAMPLE_IDS.lyra] },
   ],
+  runtime: {
+    world_schema: {
+      type: 'object',
+      required: ['doors', 'inventory', 'items'],
+      properties: {
+        doors: { type: 'object' },
+        inventory: { type: 'object' },
+        items: { type: 'object' },
+      },
+    },
+    actions: [
+      {
+        key: 'take', label: 'Take an item', actor: 'user',
+        description: 'Take a portable item from the current scene.',
+        parameters_schema: { type: 'object', required: ['item'], properties: { item: { type: 'string', pattern: '^[a-z0-9_-]+$' } }, additionalProperties: false },
+        preconditions: [
+          { path: 'world.items.{{params.item}}.portable', operator: 'eq', value: true, message: 'That item is not portable.' },
+          { path: 'world.items.{{params.item}}.location', operator: 'eq', value: '$state.scene.id', message: 'The item is not in the current scene.' },
+        ],
+        effects: [
+          { op: 'append', path: 'world.inventory.user', value: '$params.item' },
+          { op: 'set', path: 'world.items.{{params.item}}.location', value: 'user' },
+        ],
+        observations: [{ audience: ['public'], template: '{{actor_name}} takes {{params.item}}.' }],
+      },
+      {
+        key: 'unlock', label: 'Unlock a door', actor: 'user',
+        description: 'Unlock an authored door with an item currently held by the player.',
+        parameters_schema: { type: 'object', required: ['target', 'tool'], properties: { target: { type: 'string', pattern: '^[a-z0-9_-]+$' }, tool: { type: 'string', pattern: '^[a-z0-9_-]+$' } }, additionalProperties: false },
+        preconditions: [
+          { path: 'world.doors.{{params.target}}.locked', operator: 'eq', value: true, message: 'That route is not currently locked.' },
+          { path: 'world.inventory.user', operator: 'contains', value: '$params.tool', message: 'You do not possess the required tool.' },
+        ],
+        effects: [{ op: 'set', path: 'world.doors.{{params.target}}.locked', value: false }],
+        observations: [{ audience: ['public'], template: 'The lock on {{params.target}} releases with a recorded click; the route remains closed until a separate open action succeeds.' }],
+      },
+      {
+        key: 'open', label: 'Open a door', actor: 'user',
+        description: 'Open an authored door only when it is unlocked.',
+        parameters_schema: { type: 'object', required: ['target'], properties: { target: { type: 'string', pattern: '^[a-z0-9_-]+$' } }, additionalProperties: false },
+        preconditions: [
+          { path: 'world.doors.{{params.target}}', operator: 'exists', message: 'That door does not exist in the current world.' },
+          { path: 'world.doors.{{params.target}}.locked', operator: 'eq', value: false, message: 'The door remains locked.', audience: ['public'] },
+        ],
+        effects: [{ op: 'set', path: 'world.doors.{{params.target}}.open', value: true }],
+        observations: [{ audience: ['public'], template: '{{params.target}} opens.' }],
+      },
+      {
+        key: 'move', label: 'Move through a route', actor: 'user',
+        description: 'Move to a scene through an open route.',
+        parameters_schema: { type: 'object', required: ['target'], properties: { target: { type: 'string', pattern: '^[a-z0-9_-]+$' } }, additionalProperties: false },
+        preconditions: [{ path: 'world.doors.{{params.target}}.open', operator: 'eq', value: true, message: 'The route is not open.' }],
+        effects: [{ op: 'scene.change', scene: { id: '$params.target', title: '$params.target', location: '$params.target', time: 'Before midnight' } }],
+        observations: [{ audience: ['public'], template: '{{actor_name}} moves into {{params.target}}.' }],
+      },
+    ],
+    agendas: [
+      { id: 'mira-protect-archive', owner: 'mira-vale', objective: 'Protect the archive while investigating the missing lens.', priority: 80, visibility: 'public' },
+      { id: 'lyra-stop-gate', owner: 'lyra-voss', objective: 'Prevent an uncontrolled gate opening.', priority: 90, visibility: 'public' },
+      { id: 'rowan-survive', owner: 'rowan-ash', objective: 'Survive without casually revealing the lens fragment.', priority: 70, visibility: 'private' },
+    ],
+    prompt_graph: { nodes: [] },
+    state_visibility: [
+      { path: 'items.lens_fragment', audience: ['char_rowan_ash', 'director'], note: 'Rowan alone knows what is concealed in the scarf.' },
+    ],
+  },
 }
 
 const CAST = [
@@ -123,7 +193,7 @@ const CAST = [
 export function seedDemo({ db, repository, force = false, includeConversation = false }) {
   const existingVersion = db.getSetting('seed.version', 0)
   const hasRequestedConversation = !includeConversation || Boolean(db.raw.prepare('SELECT 1 FROM conversations WHERE id = ?').get(SAMPLE_IDS.conversation))
-  if (!force && existingVersion >= 5 && hasRequestedConversation) return { seeded: false, version: existingVersion }
+  if (!force && existingVersion >= 7 && hasRequestedConversation) return { seeded: false, version: existingVersion }
   const timestamp = nowIso()
   db.transaction(() => {
     for (const character of CHARACTERS) {
@@ -174,8 +244,8 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
         id, title, summary, premise, genre, tone, opening_scene, world_rules_json, lore_json,
         initial_state_json, author_notes, created_at, updated_at, slug, hook, cover_url,
         player_role, content_warnings_json, tags_json, scenes_json, metadata_json,
-        share_policy_json, revision, visibility
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, 'public')
+        share_policy_json, revision, visibility, runtime_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, 1, 'public', ?)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, summary=excluded.summary, premise=excluded.premise,
         genre=excluded.genre, tone=excluded.tone, opening_scene=excluded.opening_scene,
         world_rules_json=excluded.world_rules_json, lore_json=excluded.lore_json,
@@ -183,14 +253,14 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
         slug=excluded.slug, hook=excluded.hook, player_role=excluded.player_role,
         content_warnings_json=excluded.content_warnings_json, tags_json=excluded.tags_json,
         scenes_json=excluded.scenes_json, metadata_json=excluded.metadata_json,
-        share_policy_json=excluded.share_policy_json, visibility='public', updated_at=excluded.updated_at
+        share_policy_json=excluded.share_policy_json, runtime_json=excluded.runtime_json, visibility='public', updated_at=excluded.updated_at
     `).run(
       SAMPLE_IDS.story, STORY.title, STORY.summary, STORY.premise, STORY.genre, STORY.tone,
       STORY.opening_scene, stableStringify(STORY.world_rules), stableStringify(STORY.lore),
       stableStringify(STORY.initial_state), STORY.author_notes, timestamp, timestamp, STORY.slug,
       STORY.hook, STORY.player_role, stableStringify(STORY.content_warnings), stableStringify(STORY.tags),
       stableStringify(STORY.scenes), stableStringify({ sample: true, featured: true }),
-      stableStringify({ allow_remix: true, attribution: 'Harness Tavern sample' }),
+      stableStringify({ allow_remix: true, attribution: 'Harness Tavern sample' }), stableStringify(STORY.runtime),
     )
 
     db.raw.prepare('DELETE FROM story_cast WHERE story_id = ?').run(SAMPLE_IDS.story)
@@ -258,6 +328,6 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
     db.setSetting('user.profile', { ...profile, default_persona_id: SAMPLE_IDS.persona })
   }
 
-  db.setSetting('seed.version', 5)
-  return { seeded: true, version: 5, sample: { ...SAMPLE_IDS, conversation: includeConversation ? SAMPLE_IDS.conversation : null } }
+  db.setSetting('seed.version', 7)
+  return { seeded: true, version: 7, sample: { ...SAMPLE_IDS, conversation: includeConversation ? SAMPLE_IDS.conversation : null } }
 }
