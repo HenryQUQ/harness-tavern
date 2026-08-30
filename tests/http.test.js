@@ -18,6 +18,10 @@ await test('bootstrap exposes the Tavern-first experience, model choices, and en
   assert.equal(body.sample.story_id, SAMPLE_IDS.story)
   assert.equal(body.sample.character_ids.length, 3)
   assert.equal(body.conversations.some(item => 'mode' in item), false)
+  const sampleConversation = body.conversations.find(item => item.id === SAMPLE_IDS.conversation)
+  assert.equal(sampleConversation.group.kind, 'story')
+  assert.equal(sampleConversation.group.id, SAMPLE_IDS.story)
+  assert.equal(sampleConversation.group.cast.length, 3)
   assert.ok(body.home.continue.length >= 1)
   assert.ok(body.capabilities.includes('framework-first-content'))
   assert.ok(body.capabilities.includes('explicit-content-lifecycle'))
@@ -67,6 +71,23 @@ await test('starts without dummy conversations unless the test fixture is explic
   assert.equal(body.conversations.length, 0)
   assert.equal(body.sample.conversation_id, null)
   assert.ok(body.characters.length >= 3)
+})
+
+await test('bootstrap groups standalone chats by their public character identity', async t => {
+  const { app, baseUrl } = await testApp(t)
+  const conversation = app.repository.createConversation({
+    title: 'A quiet conversation with Mira',
+    character_ids: [SAMPLE_IDS.mira],
+    persona_id: SAMPLE_IDS.persona,
+    skip_opening: true,
+  })
+  const { body } = await jsonRequest(baseUrl, '/api/bootstrap')
+  const item = body.conversations.find(candidate => candidate.id === conversation.id)
+  assert.equal(item.group.kind, 'character')
+  assert.equal(item.group.id, SAMPLE_IDS.mira)
+  assert.equal(item.group.title, app.repository.getCharacter(SAMPLE_IDS.mira).name)
+  assert.deepEqual(item.group.cast.map(member => member.id), [SAMPLE_IDS.mira])
+  assert.equal('private_context' in item.group.cast[0], false)
 })
 
 await test('prefers a connected real API and its default model for new conversations', async t => {
@@ -224,6 +245,7 @@ await test('browser surface is Tavern-first and keeps technical controls out of 
   const root = fileURLToPath(new URL('../public/', import.meta.url))
   const html = readFileSync(`${root}/index.html`, 'utf8')
   const js = readFileSync(`${root}/app.js`, 'utf8')
+  const css = readFileSync(`${root}/styles.css`, 'utf8')
   assert.match(html, />Home</)
   assert.match(html, />Chats</)
   assert.match(html, />Library</)
@@ -236,6 +258,15 @@ await test('browser surface is Tavern-first and keeps technical controls out of 
   assert.match(js, /Import SillyTavern/)
   assert.match(js, /\/api\/library\/items/)
   assert.doesNotMatch(js, /quickCreate|Describe a story|Create editable draft/)
+  assert.match(html, /id="conversationRail"/)
+  assert.match(html, /id="conversationGroups"/)
+  assert.match(js, /function groupedConversations\(/)
+  assert.match(js, /function openNewChatChooser\(/)
+  assert.match(js, /\['character', uiText\('角色'/)
+  assert.match(js, /\['story', uiText\('故事'/)
+  assert.match(js, /class: 'quick-settings-grid'/)
+  assert.match(css, /\.conversation-row\.active/)
+  assert.match(css, /\.drawer\.modeless/)
   assert.match(js, /name:\s*["']thinking_intensity["']/)
   assert.match(js, /numericField\(["']frequency_penalty["']/)
   for (const legacy of ['direct', 'stateful', 'agentic', 'adaptive']) {

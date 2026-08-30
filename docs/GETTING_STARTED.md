@@ -82,7 +82,7 @@ Provider keys are encrypted at rest. They are not included in public shares, Sto
 
 ## Choose or create a response preset
 
-The chat model menu includes approachable built-in presets such as **Balanced**, **Cinematic**, and **Focused**. Advanced settings can control:
+The chat model menu puts the current preset, thinking strength, response length, character initiative, and group pacing at the top. Connection, model input, and advanced sampling stay collapsed until you need them. Built-in presets include approachable options such as **Balanced**, **Cinematic**, and **Focused**. The complete settings can control:
 
 - writing instructions and response style;
 - reasoning strength;

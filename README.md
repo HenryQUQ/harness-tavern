@@ -86,7 +86,7 @@ For a guided walkthrough, connection setup, migration, backups, and troubleshoot
 2. Choose **Meet a character**, **Enter a story**, or open **Library → New** for a blank Character or Story.
 3. Try an action and open the Story Engine panel to see known facts, visible action results, ongoing intent, and timelines.
 4. When you are ready, open **Settings → AI Connections** to add your preferred service.
-5. Open the model menu inside a chat to switch API, model, or response preset.
+5. Use the compact model menu inside a chat to adjust its preset, thinking strength, response style, API, or model.
 
 The built-in demo keeps onboarding simple. A real provider is optional and can be added later without recreating your library.
 

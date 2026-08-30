@@ -1,6 +1,6 @@
 import { api, downloadJson, getAccessToken, setAccessToken, streamTurn } from './lib/api.js'
 import { $, $$, avatar, clear, el, formObject, relativeTime, safeMarkdown, lines } from './lib/dom.js'
-import { getLocale, setLocale, t } from './lib/i18n.js'
+import { getLocale, setLocale, t } from './lib/i18n.js?v=0.13.0-chat-workspace'
 
 const state = {
   boot: null,
@@ -15,6 +15,7 @@ const state = {
   migrationId: null,
   inspectorTab: 'facts',
   inspectorOpen: true,
+  conversationSearch: '',
 }
 
 function toast(message, duration = 3200) {
@@ -60,6 +61,8 @@ async function refresh({ preserveView = true } = {}) {
 function showView(view, { updateHash = true } = {}) {
   if (!['home', 'chats', 'library', 'settings', 'chat'].includes(view)) view = 'home'
   state.view = view
+  $('#app').classList.toggle('conversation-mode', view === 'chats' || view === 'chat')
+  $('#app').classList.toggle('chat-open', view === 'chat')
   $$('.view').forEach(node => node.classList.toggle('active', node.id === `view-${view}`))
   $$('#primaryNav button, #settingsNav').forEach(button => button.classList.toggle('active', button.dataset.view === view))
   if (updateHash && view !== 'chat') history.replaceState(null, '', `#${view}`)
@@ -97,14 +100,19 @@ function closeModal({ force = false } = {}) {
   state.modalCloseGuard = null
   return true
 }
-function openDrawer(title, content) {
+function openDrawer(title, content, { modeless = false, kind = 'default' } = {}) {
   $('#drawerTitle').textContent = title
   clear($('#drawerBody')).append(content)
+  $('#drawer').classList.toggle('modeless', modeless)
+  $('#drawer').dataset.kind = kind
   $('#drawer').classList.remove('hidden')
-  $('#mobileScrim').classList.remove('hidden')
+  if (!modeless || matchMedia('(max-width: 720px)').matches) $('#mobileScrim').classList.remove('hidden')
+  else if (!$('.sidebar').classList.contains('open')) $('#mobileScrim').classList.add('hidden')
 }
 function closeDrawer() {
   $('#drawer').classList.add('hidden')
+  $('#drawer').classList.remove('modeless')
+  $('#drawer').dataset.kind = 'default'
   if (!$('.sidebar').classList.contains('open')) $('#mobileScrim').classList.add('hidden')
 }
 
@@ -163,21 +171,95 @@ function renderHome() {
   clear($('#homeStoryGrid')).append(...home.stories.slice(0, 8).map(storyCard))
 }
 
+function conversationMatches(conversation, query) {
+  if (!query) return true
+  const group = conversation.group || {}
+  const searchable = [conversation.title, conversation.last_preview, group.title, group.subtitle, ...(group.cast || []).map(member => member.name)]
+  return searchable.filter(Boolean).join(' ').toLocaleLowerCase().includes(query)
+}
+
+function groupedConversations() {
+  const query = state.conversationSearch.toLocaleLowerCase().trim()
+  const kinds = new Map([['character', new Map()], ['story', new Map()]])
+  for (const conversation of state.boot.conversations.filter(item => conversationMatches(item, query))) {
+    const fallbackKind = conversation.story_id ? 'story' : 'character'
+    const group = conversation.group || { kind: fallbackKind, id: conversation.story_id || 'general', title: fallbackKind === 'story' ? 'Story' : 'Characters', cast: [] }
+    const kind = group.kind === 'story' ? 'story' : 'character'
+    const key = `${kind}:${group.id}`
+    if (!kinds.get(kind).has(key)) kinds.get(kind).set(key, { group, conversations: [] })
+    kinds.get(kind).get(key).conversations.push(conversation)
+  }
+  return kinds
+}
+
+function conversationGroupAvatar(group) {
+  if (group.kind === 'story' || (group.cast || []).length > 1) return castStack(group.cast, 'sm')
+  return avatar({ name: group.title, avatar_url: group.avatar_url }, 'sm')
+}
+
+function conversationRailRow(conversation) {
+  const active = conversation.id === state.conversationId
+  return el('button', {
+    class: `conversation-row ${active ? 'active' : ''}`,
+    'aria-current': active ? 'page' : 'false',
+    on: { click: () => openConversation(conversation.id) },
+  },
+  el('span', { class: 'conversation-row-copy' },
+    el('strong', { text: conversation.title }),
+    el('small', { text: conversation.last_preview || uiText('还没有消息', 'No messages yet') }),
+  ),
+  el('time', { dateTime: conversation.updated_at, text: relativeTime(conversation.updated_at, getLocale()) }))
+}
+
 function renderChats() {
-  const grid = clear($('#chatGrid'))
+  const root = clear($('#conversationGroups'))
   if (!state.boot.conversations.length) {
-    grid.append(emptyState(t('noRecent'), el('button', { text: t('talkCharacter'), on: { click: () => { state.libraryTab = 'characters'; showView('library') } } })))
+    root.append(emptyState(uiText('还没有对话。从角色或故事开始。', 'No conversations yet. Start with a character or story.'), el('button', { class: 'compact', text: uiText('打开资料库', 'Open library'), on: { click: () => showView('library') } })))
     return
   }
-  const homeById = new Map(state.boot.home.continue.map(item => [item.id, item]))
-  grid.append(...state.boot.conversations.map(conversation => {
-    const item = homeById.get(conversation.id) || { ...conversation, cast: [], subtitle: '', current_scene: null }
-    return el('article', { class: 'conversation-card' }, el('button', { on: { click: () => openConversation(conversation.id) } },
-      el('div', { class: 'continue-card-head' }, castStack(item.cast, 'md'), el('div', {}, el('h3', { text: conversation.title }), el('small', { text: item.current_scene?.location || item.subtitle || '' }))),
-      el('p', { text: conversation.last_preview || item.subtitle || t('noRecent') }),
-      el('div', { class: 'continue-card-footer' }, el('span', { text: conversation.story_id ? 'Story playthrough' : 'Character chat' }), el('span', { text: relativeTime(conversation.updated_at, getLocale()) })),
+
+  const grouped = groupedConversations()
+  const sections = [
+    ['character', uiText('角色', 'Characters')],
+    ['story', uiText('故事', 'Stories')],
+  ]
+  for (const [kind, label] of sections) {
+    const groups = [...grouped.get(kind).values()]
+    if (!groups.length) continue
+    const count = groups.reduce((total, item) => total + item.conversations.length, 0)
+    root.append(el('section', { class: 'conversation-kind', dataset: { kind } },
+      el('div', { class: 'conversation-kind-heading' }, el('span', { text: label }), el('span', { text: String(count) })),
+      ...groups.map(({ group, conversations }) => el('div', { class: 'conversation-entity-group' },
+        el('div', { class: 'conversation-entity-heading' }, conversationGroupAvatar(group), el('div', {}, el('strong', { text: group.title }), el('small', { text: group.kind === 'story' ? uiText('故事进程', 'Story playthroughs') : uiText('角色对话', 'Character chats') })), conversations.length > 1 ? el('span', { class: 'conversation-count', text: String(conversations.length) }) : null),
+        el('div', { class: 'conversation-rows' }, ...conversations.map(conversationRailRow)),
+      )),
     ))
-  }))
+  }
+  if (!root.children.length) root.append(emptyState(uiText('没有匹配的对话。', 'No matching conversations.')))
+}
+
+function openNewChatChooser() {
+  const choose = tab => {
+    closeModal()
+    state.libraryTab = tab
+    showView('library')
+  }
+  const content = el('div', { class: 'new-content-shell' },
+    el('p', { class: 'new-content-principle', text: uiText('选择从一个角色开始，或进入一个故事。现有内容不会被复制或改写。', 'Start with a character or enter a story. Existing content is never copied or rewritten.') }),
+    el('div', { class: 'new-content-list' },
+      el('button', { class: 'new-content-option', on: { click: () => choose('characters') } },
+        el('span', { class: 'new-content-icon', text: '◌' }),
+        el('span', { class: 'new-content-copy' }, el('strong', { text: t('talkCharacter') }), el('small', { text: uiText('开始一段独立的角色对话。', 'Start an independent character conversation.') })),
+        el('span', { class: 'new-content-arrow', text: '→' }),
+      ),
+      el('button', { class: 'new-content-option', on: { click: () => choose('stories') } },
+        el('span', { class: 'new-content-icon', text: '◇' }),
+        el('span', { class: 'new-content-copy' }, el('strong', { text: t('enterStory') }), el('small', { text: uiText('选择故事并开始一个新的因果进程。', 'Choose a Story and begin a new causal playthrough.') })),
+        el('span', { class: 'new-content-arrow', text: '→' }),
+      ),
+    ),
+  )
+  openModal(uiText('新对话', 'New conversation'), content, { autoFocus: false })
 }
 
 function renderLibrary() {
@@ -778,9 +860,10 @@ async function openConversation(conversationId) {
   renderMessages()
   renderQuickActions()
   renderCausalInspector()
+  renderChats()
   showView('chat', { updateHash: false })
   history.replaceState(null, '', `#chat/${encodeURIComponent(conversationId)}`)
-  $('#messageInput').focus()
+  if (matchMedia('(hover: hover) and (pointer: fine)').matches) $('#messageInput').focus()
 }
 
 function conversationConnection(conversation = state.conversation?.conversation) {
@@ -1111,38 +1194,46 @@ async function openModelControlsDrawer(initialPresetId = '') {
     hint ? el('small', { text: hint }) : null,
   )
 
-  const form = el('form', { class: 'friendly-form' },
-    el('section', { class: 'control-section' },
-      el('div', { class: 'control-section-heading' }, el('div', {}, el('p', { class: 'eyebrow', text: t('aiService') }), el('h3', { text: t('connectionModel') })), el('span', { class: `connection-state ${currentConnection?.provider_id === 'mock' ? 'demo' : ''}`, text: currentConnection?.provider_id === 'mock' ? t('demo') : t('connected') })),
-      el('label', { class: 'field' }, el('span', { text: t('aiService') }), connectionSelect),
-      el('label', { class: 'field' }, el('span', { text: t('model') }), el('div', { class: 'model-input-row' }, modelInput, refreshModels), modelList, modelStatus),
-      el('button', { type: 'button', class: 'text-button control-link', text: `＋ ${t('addAiService')}`, on: { click: () => { closeDrawer(); openProviderForm() } } }),
-    ),
-    el('section', { class: 'control-section' },
-      el('div', { class: 'control-section-heading' }, el('div', {}, el('p', { class: 'eyebrow', text: t('responsePreset') }), el('h3', { text: t('reusableSetup') }))),
-      el('label', { class: 'field' }, presetSelect),
-      presetSummary,
-      presetFileInput,
-      el('div', { class: 'inline-actions' }, savePreset, updatePreset, importPreset, removePreset),
-    ),
-    el('section', { class: 'control-section' },
-      el('div', { class: 'control-section-heading' }, el('div', {}, el('p', { class: 'eyebrow', text: t('aiInput') }), el('h3', { text: t('modelReceives') }))),
-      el('label', { class: 'field' }, el('span', { text: t('customInstructions') }), el('textarea', { name: 'custom_instructions', rows: 6, maxlength: 20000, value: conversation.prompt.custom_instructions, placeholder: getLocale() === 'zh' ? '例如：保持对白克制，场景描写简短。' : 'For example: Keep dialogue understated and use short scene descriptions.' }), el('small', { text: t('instructionHint') })),
-      el('label', { class: 'field' }, el('span', { text: t('historyMessages') }), el('input', { name: 'history_messages', type: 'number', min: 0, max: 10000, step: 1, value: conversation.prompt.history_messages ?? '', placeholder: localText('留空 = 全部历史', 'Blank = all history') }), el('small', { text: localText('留空时 Tavern 不设消息数量上限，由模型服务处理上下文。', 'Leave blank for no Tavern message-count ceiling; the model service manages its context.') })),
-      el('label', { class: 'field' }, el('span', { text: localText('显式上下文预算（可选）', 'Explicit context budget (optional)') }), el('input', { name: 'context_budget_tokens', type: 'number', min: 512, max: 10000000, step: 1, value: conversation.prompt.context_budget_tokens ?? '', placeholder: localText('留空 = 不设置', 'Blank = no Tavern ceiling') }), el('small', { text: localText('仅在你主动填写时启用；超预算时按完整信息块取舍，绝不截断文字。', 'Only active when you set it. Whole context blocks are selected; text is never cut mid-block.') })),
-      el('div', { class: 'prompt-stack' },
-        el('span', { text: getLocale() === 'zh' ? '核心规则 · 受保护' : 'Core rules · protected' }), el('span', { text: getLocale() === 'zh' ? '角色与故事' : 'Character & story' }), el('span', { text: getLocale() === 'zh' ? '记忆与状态' : 'Memory & state' }), el('span', { text: getLocale() === 'zh' ? '你的指令' : 'Your instructions' }), el('span', { text: getLocale() === 'zh' ? '聊天历史' : 'Chat history' }),
+  const form = el('form', { class: 'friendly-form model-controls-form' },
+    el('section', { class: 'control-section quick-control-section' },
+      el('div', { class: 'control-section-heading' },
+        el('div', {}, el('p', { class: 'eyebrow', text: localText('本次对话', 'This chat') }), el('h3', { text: localText('快捷设置', 'Quick settings') })),
+        el('span', { class: `connection-state ${currentConnection?.provider_id === 'mock' ? 'demo' : ''}`, text: currentConnection?.provider_id === 'mock' ? t('demo') : t('connected') }),
       ),
-    ),
-    el('section', { class: 'control-section' },
-      el('div', { class: 'control-section-heading' }, el('div', {}, el('p', { class: 'eyebrow', text: localText('推理与回复', 'Reasoning & reply') }), el('h3', { text: localText('模型如何思考和回应', 'How the model thinks and responds') }))),
-      el('div', { class: 'form-row response-controls' },
+      el('label', { class: 'field preset-picker' }, el('span', { text: t('responsePreset') }), presetSelect),
+      presetSummary,
+      el('div', { class: 'quick-settings-grid' },
         el('label', { class: 'field' }, el('span', { text: t('thinking') }), el('select', { name: 'thinking_intensity' },
           el('option', { value: 'auto', text: t('automatic') }), el('option', { value: 'none', text: localText('关闭', 'None') }), el('option', { value: 'low', text: t('fast') }), el('option', { value: 'medium', text: t('balanced') }), el('option', { value: 'high', text: t('thoughtful') }), el('option', { value: 'max', text: t('deepest') }),
-        ), el('small', { text: localText('预设会保存此项，并映射到所选模型的原生推理参数。', 'Saved with the preset and mapped to the selected model’s native reasoning control.') })),
+        )),
         el('label', { class: 'field' }, el('span', { text: t('responseLength') }), el('select', { name: 'response_length' }, el('option', { value: 'short', text: t('short') }), el('option', { value: 'natural', text: t('natural') }), el('option', { value: 'detailed', text: t('detailed') }))),
         el('label', { class: 'field' }, el('span', { text: t('initiative') }), el('select', { name: 'initiative' }, el('option', { value: 'reactive', text: t('reactive') }), el('option', { value: 'balanced', text: t('balanced') }), el('option', { value: 'proactive', text: t('proactive') }))),
         el('label', { class: 'field' }, el('span', { text: t('pacing') }), el('select', { name: 'pacing' }, el('option', { value: 'focused', text: t('focused') }), el('option', { value: 'natural', text: t('natural') }), el('option', { value: 'ensemble', text: t('ensemble') }))),
+      ),
+      el('small', { class: 'quick-settings-hint', text: localText('所有变更从下一次回复开始生效；思考强度会映射到当前模型支持的原生参数。', 'Changes apply on the next reply; thinking intensity maps to the native control supported by the current model.') }),
+      el('details', { class: 'preset-actions-details' },
+        el('summary', { text: localText('保存、导入或管理预设', 'Save, import, or manage presets') }),
+        presetFileInput,
+        el('div', { class: 'inline-actions' }, savePreset, updatePreset, importPreset, removePreset),
+      ),
+    ),
+    el('details', { class: 'control-section control-details' },
+      el('summary', {}, el('div', {}, el('p', { class: 'eyebrow', text: t('aiService') }), el('h3', { text: t('connectionModel') }), el('small', { text: `${currentConnection?.label || t('aiService')} · ${conversation.model_id || t('model')}` })), el('span', { text: '›' })),
+      el('div', { class: 'control-details-body' },
+        el('label', { class: 'field' }, el('span', { text: t('aiService') }), connectionSelect),
+        el('label', { class: 'field' }, el('span', { text: t('model') }), el('div', { class: 'model-input-row' }, modelInput, refreshModels), modelList, modelStatus),
+        el('button', { type: 'button', class: 'text-button control-link', text: `＋ ${t('addAiService')}`, on: { click: () => { closeDrawer(); openProviderForm() } } }),
+      ),
+    ),
+    el('details', { class: 'control-section control-details' },
+      el('summary', {}, el('div', {}, el('p', { class: 'eyebrow', text: t('aiInput') }), el('h3', { text: t('modelReceives') }), el('small', { text: localText('自定义指令、历史与可选上下文预算', 'Instructions, history, and optional context budget') })), el('span', { text: '›' })),
+      el('div', { class: 'control-details-body' },
+        el('label', { class: 'field' }, el('span', { text: t('customInstructions') }), el('textarea', { name: 'custom_instructions', rows: 6, maxlength: 20000, value: conversation.prompt.custom_instructions, placeholder: getLocale() === 'zh' ? '例如：保持对白克制，场景描写简短。' : 'For example: Keep dialogue understated and use short scene descriptions.' }), el('small', { text: t('instructionHint') })),
+        el('label', { class: 'field' }, el('span', { text: t('historyMessages') }), el('input', { name: 'history_messages', type: 'number', min: 0, max: 10000, step: 1, value: conversation.prompt.history_messages ?? '', placeholder: localText('留空 = 全部历史', 'Blank = all history') }), el('small', { text: localText('留空时 Tavern 不设消息数量上限，由模型服务处理上下文。', 'Leave blank for no Tavern message-count ceiling; the model service manages its context.') })),
+        el('label', { class: 'field' }, el('span', { text: localText('显式上下文预算（可选）', 'Explicit context budget (optional)') }), el('input', { name: 'context_budget_tokens', type: 'number', min: 512, max: 10000000, step: 1, value: conversation.prompt.context_budget_tokens ?? '', placeholder: localText('留空 = 不设置', 'Blank = no Tavern ceiling') }), el('small', { text: localText('仅在你主动填写时启用；超预算时按完整信息块取舍，绝不截断文字。', 'Only active when you set it. Whole context blocks are selected; text is never cut mid-block.') })),
+        el('div', { class: 'prompt-stack' },
+          el('span', { text: getLocale() === 'zh' ? '核心规则 · 受保护' : 'Core rules · protected' }), el('span', { text: getLocale() === 'zh' ? '角色与故事' : 'Character & story' }), el('span', { text: getLocale() === 'zh' ? '记忆与状态' : 'Memory & state' }), el('span', { text: getLocale() === 'zh' ? '你的指令' : 'Your instructions' }), el('span', { text: getLocale() === 'zh' ? '聊天历史' : 'Chat history' }),
+        ),
       ),
     ),
     el('details', { class: 'control-section control-details' },
@@ -1389,7 +1480,7 @@ async function openModelControlsDrawer(initialPresetId = '') {
     } catch (error) { toast(error.message, 7000) }
   })
 
-  openDrawer(t('aiControls'), form)
+  openDrawer(t('aiControls'), form, { modeless: true, kind: 'model-controls' })
   updatePresetActions()
   await loadModels()
 }
@@ -2015,6 +2106,7 @@ function wireEvents() {
   $('#mobileScrim').addEventListener('click', () => { closeDrawer(); closeMobileNav() })
   $('#libraryTabs').addEventListener('click', event => { const button = event.target.closest('[data-tab]'); if (!button) return; state.libraryTab = button.dataset.tab; renderLibrary() })
   $('#librarySearch').addEventListener('input', renderLibrary)
+  $('#conversationSearch').addEventListener('input', event => { state.conversationSearch = event.target.value; renderChats() })
   $('#composer').addEventListener('submit', async event => { event.preventDefault(); if (state.streaming) { await api(`/api/conversations/${state.conversationId}/cancel`, { method: 'POST' }); return } await sendCurrentMessage() })
   $('#messageInput').addEventListener('input', event => { event.target.style.height = 'auto'; event.target.style.height = `${Math.min(200, event.target.scrollHeight)}px` })
   $('#profileForm').addEventListener('submit', async event => { event.preventDefault(); await api('/api/user-profile', { method: 'PATCH', body: JSON.stringify(formObject(event.currentTarget)) }); await refresh(); toast(t('saved')) })
@@ -2057,7 +2149,7 @@ function wireEvents() {
       'view-all-chats': () => showView('chats'),
       'open-library': () => showView('library'),
       'new-content': openNewContent,
-      'new-chat': () => { state.libraryTab = 'characters'; showView('library') },
+      'new-chat': openNewChatChooser,
       'open-import': () => openImportDialog(),
       'export-library': async () => downloadJson(await api('/api/exports/library'), 'my-tavern-library.tavern.json'),
       'export-backup': async () => downloadJson(await api('/api/exports/backup'), 'harness-tavern-backup.tavern.json'),
