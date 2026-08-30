@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,7 @@ const ignoredDirectories = new Set(['.git', '.ht-data', 'coverage', 'node_module
 const requiredFiles = [
   '.editorconfig', '.gitattributes', '.gitignore', '.nvmrc',
   'CONTRIBUTING.md', 'LICENSE', 'README.md', 'SECURITY.md',
+  'docs/DEVELOPMENT.md', 'docs/GETTING_STARTED.md', 'docs/README.md',
   'package-lock.json', 'package.json',
 ]
 const jsonExtensions = new Set(['.json', '.webmanifest'])
@@ -56,6 +57,34 @@ for (const path of files.filter(path => extname(path) === '.js')) {
 
 for (const name of requiredFiles) {
   if (!files.some(path => relative(root, path) === name)) fail(name, 'required repository file is missing')
+}
+
+function localLinkTarget(rawTarget) {
+  let target = rawTarget.trim()
+  if (target.startsWith('<') && target.includes('>')) target = target.slice(1, target.indexOf('>'))
+  else target = target.split(/\s+["']/u, 1)[0]
+  if (!target || /^(?:[a-z][a-z0-9+.-]*:|#|\/)/iu.test(target)) return null
+  const path = target.split(/[?#]/u, 1)[0]
+  if (!path) return null
+  try {
+    return decodeURIComponent(path)
+  } catch {
+    return path
+  }
+}
+
+for (const { path, source } of textFiles.filter(item => extname(item.path) === '.md')) {
+  const withoutFencedCode = source.replace(/^(?:```|~~~)[^\n]*\n[\s\S]*?^(?:```|~~~)\s*$/gmu, '')
+  const targets = [
+    ...[...withoutFencedCode.matchAll(/!?\[[^\]]*\]\(([^)\n]+)\)/gu)].map(match => match[1]),
+    ...[...withoutFencedCode.matchAll(/\b(?:href|src)=["']([^"']+)["']/giu)].map(match => match[1]),
+  ]
+  for (const rawTarget of targets) {
+    const target = localLinkTarget(rawTarget)
+    if (!target) continue
+    const resolvedTarget = resolve(path, '..', target)
+    if (!existsSync(resolvedTarget)) fail(path, `local documentation link does not exist: ${rawTarget}`)
+  }
 }
 
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
