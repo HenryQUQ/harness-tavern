@@ -651,7 +651,6 @@ export class TavernRepository {
         .sort((a, b) => Number(b.favorite) - Number(a.favorite) || b.updated_at.localeCompare(a.updated_at)).slice(0, 8),
       stories: this.listStories().map(item => ({ ...item, favorite: favoriteKeys.has(`story:${item.id}`), playthroughs: this.listPlaythroughs(item.id) }))
         .sort((a, b) => Number(b.favorite) - Number(a.favorite) || b.updated_at.localeCompare(a.updated_at)).slice(0, 8),
-      drafts: this.listDrafts().slice(0, 4),
     }
   }
 
@@ -660,40 +659,17 @@ export class TavernRepository {
     return [...events].reverse().find(event => event.type === 'scene.changed')?.payload ?? null
   }
 
-  listDrafts(type = null) {
+  listLegacyDrafts(type = null) {
     const rows = type
       ? this.db.raw.prepare('SELECT * FROM creator_drafts WHERE type = ? ORDER BY updated_at DESC').all(type)
       : this.db.raw.prepare('SELECT * FROM creator_drafts ORDER BY updated_at DESC').all()
     return rows.map(draftFromRow)
   }
 
-  getDraft(draftId) {
+  getLegacyDraft(draftId) {
     const row = this.db.raw.prepare('SELECT * FROM creator_drafts WHERE id = ?').get(draftId)
-    assert(row, 'Draft not found', 404, 'not_found')
+    assert(row, 'Legacy draft not found', 404, 'not_found')
     return draftFromRow(row)
-  }
-
-  saveDraft({ id: draftId = null, type, title, brief = '', data = {}, status = 'draft' }) {
-    assert(['character', 'story'].includes(type), 'Draft type must be character or story')
-    const existing = draftId ? this.db.raw.prepare('SELECT * FROM creator_drafts WHERE id = ?').get(draftId) : null
-    const draft = draftId || id('draft')
-    const timestamp = nowIso()
-    this.db.raw.prepare(`
-      INSERT INTO creator_drafts(id, type, title, brief, data_json, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET title=excluded.title, brief=excluded.brief, data_json=excluded.data_json,
-        status=excluded.status, updated_at=excluded.updated_at
-    `).run(
-      draft, type, cleanText(title || data.name || data.title || 'Untitled draft', 200), cleanText(brief, 10_000),
-      stableStringify(data), ['draft', 'published', 'archived'].includes(status) ? status : 'draft',
-      existing?.created_at ?? timestamp, timestamp,
-    )
-    return this.getDraft(draft)
-  }
-
-  deleteDraft(draftId) {
-    const result = this.db.raw.prepare('DELETE FROM creator_drafts WHERE id = ?').run(draftId)
-    assert(result.changes > 0, 'Draft not found', 404, 'not_found')
   }
 
   recordImport({ packFormat, sourceName, strategy, result }) {

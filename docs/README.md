@@ -7,15 +7,15 @@ This directory is the maintained knowledge base for Harness Tavern. The reposito
 | You are… | Begin with… | Continue with… |
 |---|---|---|
 | A new player | [Getting started](GETTING_STARTED.md) | [Migration](MIGRATION.md) |
-| A character or Story creator | [Creator guide](CREATOR_GUIDE.md) | [Editable Story sources](STORY_SOURCES.md) |
+| A Character or Story author | [Content authoring guide](CREATOR_GUIDE.md) | [Editable Story sources](STORY_SOURCES.md) |
 | A contributor | [Developer guide](DEVELOPMENT.md) | [Architecture](ARCHITECTURE.md) and [API](API.md) |
 | An operator | [Operations](OPERATIONS.md) | [Security](SECURITY.md) |
 | An integrator | [API](API.md) | [Sharing and extensions](SHARING_AND_EXTENSIONS.md) |
 
-## User and creator guides
+## User and author guides
 
 - [Getting started](GETTING_STARTED.md) — installation, first use, AI connections, migration, backups, and common problems.
-- [Creator guide](CREATOR_GUIDE.md) — create, review, play-test, and share characters and Stories without writing code.
+- [Content authoring guide](CREATOR_GUIDE.md) — add blank/imported standard content, edit every field, play-test, and share without a core creative generator.
 - [Migration](MIGRATION.md) — upgrade an existing Harness Tavern instance or preview and migrate SillyTavern content.
 - [Editable Story sources](STORY_SOURCES.md) — maintain narrator-only, single-character, and ensemble Stories as one JSON file or a multi-file project.
 - [Sharing and extensions](SHARING_AND_EXTENSIONS.md) — public previews, Tavern packs, portable playthroughs, backups, and declarative extensions.
@@ -49,7 +49,7 @@ When writing documentation:
 
 1. start with the reader's outcome, not an internal class name;
 2. distinguish current behavior from future direction;
-3. keep player-visible, creator-private, and runtime-private concepts separate;
+3. keep player-visible, author-private, and runtime-private concepts separate;
 4. include commands that can be copied from the repository root;
 5. never include real credentials, private transcripts, local databases, or unredacted provider payloads;
 6. use relative links for repository content so forks and offline source archives remain navigable;

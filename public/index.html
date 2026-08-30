@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#17131d">
-  <meta name="description" content="Persistent characters, roleplay stories, and a friendly no-code story studio.">
+  <meta name="description" content="A framework for persistent characters, causal stories, portable content, and model-independent play.">
   <title>Harness Tavern</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
@@ -20,7 +20,6 @@
         <button data-view="home" class="active"><span aria-hidden="true">⌂</span><span data-i18n="home">Home</span></button>
         <button data-view="chats"><span aria-hidden="true">◌</span><span data-i18n="chats">Chats</span></button>
         <button data-view="library"><span aria-hidden="true">◇</span><span data-i18n="library">Library</span></button>
-        <button data-view="create"><span aria-hidden="true">＋</span><span data-i18n="create">Create</span></button>
       </nav>
       <div class="sidebar-spacer"></div>
       <button id="settingsNav" class="settings-nav" data-view="settings"><span aria-hidden="true">⚙</span><span data-i18n="settings">Settings</span></button>
@@ -36,13 +35,12 @@
 
       <section id="view-home" class="view active page-view" aria-labelledby="homeTitle">
         <div class="hero-panel">
-          <div><p class="eyebrow">Harness Tavern</p><h1 id="homeTitle">Stories and characters that continue with you.</h1><p>Return to a relationship, enter a living story, or create your own without writing prompts or configuration.</p></div>
-          <div class="hero-actions"><button data-action="explore-stories">Explore stories</button><button class="secondary" data-action="quick-create-story">Create a story</button></div>
+          <div><p class="eyebrow">Harness Tavern</p><h1 id="homeTitle">Stories and characters that continue with you.</h1><p>A portable framework keeps authored content, causal facts, model input, and playthrough history as separate layers.</p></div>
+          <div class="hero-actions"><button data-action="explore-stories">Explore stories</button><button class="secondary" data-action="open-library">Open Library</button></div>
         </div>
         <section class="content-section"><div class="section-heading"><div><p class="eyebrow" data-i18n="continue">Continue</p><h2 data-i18n="continueJourney">Continue your journey</h2></div><button class="text-button" data-action="view-all-chats" data-i18n="allChats">All conversations</button></div><div id="continueGrid" class="continue-grid"></div></section>
         <section class="content-section"><div class="section-heading"><div><h2 data-i18n="charactersWaiting">Characters waiting for you</h2></div><button class="text-button" data-action="view-characters" data-i18n="characters">Characters</button></div><div id="homeCharacterGrid" class="card-grid horizontal"></div></section>
         <section class="content-section"><div class="section-heading"><div><h2 data-i18n="storiesToEnter">Stories to enter</h2></div><button class="text-button" data-action="view-stories" data-i18n="stories">Stories</button></div><div id="homeStoryGrid" class="card-grid horizontal"></div></section>
-        <section class="content-section"><div class="section-heading"><div><h2 data-i18n="createSomething">Create something</h2><p data-i18n="createHint">Use ordinary language. Everything remains editable before publishing.</p></div></div><div class="create-shortcuts"><button data-action="quick-create-character"><span>✦</span><strong data-i18n="describeCharacter">Describe a character</strong><small>Turn a short idea into an editable character.</small></button><button data-action="quick-create-story"><span>✧</span><strong data-i18n="describeStory">Describe a story</strong><small>Build a cast, world, and opening scene from one premise.</small></button></div></section>
       </section>
 
       <section id="view-chats" class="view page-view" aria-labelledby="chatsTitle">
@@ -51,16 +49,10 @@
       </section>
 
       <section id="view-library" class="view page-view" aria-labelledby="libraryTitle">
-        <div class="page-heading"><div><p class="eyebrow" data-i18n="library">Library</p><h1 id="libraryTitle">Characters and stories</h1><p>Choose someone to meet or a world to enter.</p></div><button class="secondary" data-action="open-import">Import</button></div>
+        <div class="page-heading"><div><p class="eyebrow" data-i18n="library">Library</p><h1 id="libraryTitle">Characters and stories</h1><p>Open existing content, add an explicit blank item, or import a standard file.</p></div><div class="heading-actions"><button data-action="new-content">New</button><button class="secondary" data-action="open-import">Import</button></div></div>
         <div id="libraryTabs" class="segmented"><button data-tab="characters" class="active" data-i18n="characters">Characters</button><button data-tab="stories" data-i18n="stories">Stories</button><button data-tab="personas" data-i18n="personas">Personas</button></div>
         <label class="search-box"><span>⌕</span><input id="librarySearch" type="search" placeholder="Search your library"></label>
         <div id="libraryGrid" class="card-grid"></div>
-      </section>
-
-      <section id="view-create" class="view page-view" aria-labelledby="createTitle">
-        <div class="page-heading"><div><p class="eyebrow" data-i18n="create">Create</p><h1 id="createTitle">Make something playable</h1><p data-i18n="createHint">Use ordinary language. Everything remains editable before publishing.</p></div></div>
-        <div class="creator-choice"><button data-action="quick-create-character"><span class="choice-icon">✦</span><strong data-i18n="describeCharacter">Describe a character</strong><p>Who are they, and what kind of relationship should the user be able to build?</p></button><button data-action="quick-create-story"><span class="choice-icon">✧</span><strong data-i18n="describeStory">Describe a story</strong><p>What happens, who is involved, and what should the player be free to decide?</p></button></div>
-        <section class="content-section"><div class="section-heading"><div><h2 data-i18n="drafts">Drafts</h2><p>Continue editing before you publish or playtest.</p></div></div><div id="draftGrid" class="draft-grid"></div></section>
       </section>
 
       <section id="view-settings" class="view page-view narrow-view" aria-labelledby="settingsTitle">
@@ -68,7 +60,7 @@
         <section class="settings-card"><div class="settings-card-heading"><div><h2 data-i18n="profile">Your profile</h2><p>How the Tavern greets you. Story Personas can still be different.</p></div></div><form id="profileForm" class="friendly-form"><label><span data-i18n="displayName">Your name</span><input name="name" maxlength="120"></label><label><span>About you <small>optional</small></span><textarea name="bio" rows="3" maxlength="5000"></textarea></label><div class="form-row"><label><span>Language</span><select name="locale"><option value="en">English</option><option value="zh">中文</option></select></label><label><span>Default Persona</span><select name="default_persona_id"></select></label></div><button type="submit" data-i18n="save">Save</button></form></section>
         <details id="aiConnectionsPanel" class="settings-card"><summary><div><h2 data-i18n="aiConnections">AI services</h2><p data-i18n="aiConnectionsHint">Optional. The built-in demo model works immediately.</p></div><span>›</span></summary><div class="details-body"><div class="section-heading"><h3 data-i18n="connectedServices">Connected services</h3><button class="secondary" data-action="add-provider" data-i18n="addConnection">Add an AI service</button></div><div id="connectionList" class="settings-list"></div><button id="connectOpenRouter" class="openrouter-button" data-i18n="connectOpenRouter">Connect OpenRouter account</button><div id="accountConnectionList" class="settings-list"></div></div></details>
         <details id="sharingPanel" class="settings-card"><summary><div><h2 data-i18n="importShare">Import & sharing</h2><p data-i18n="importHint">Open a Tavern pack or migrate your SillyTavern library.</p></div><span>›</span></summary><div class="details-body"><div class="profile-actions"><button class="secondary" data-action="open-import" data-i18n="chooseFile">Choose file</button><button class="secondary" data-action="export-library" data-i18n="exportLibrary">Export my library</button><button class="secondary" data-action="export-backup">Download full backup</button><button class="secondary" data-action="manage-shares" data-i18n="manageShares">Manage share links</button></div><p class="microcopy" data-i18n="packHint">Tavern packs keep the cast, hidden clues, causal state and playthrough history together. Credentials are never included.</p></div></details>
-        <details id="extensionsPanel" class="settings-card"><summary><div><h2 data-i18n="extensions">Creative add-ons</h2><p data-i18n="extensionHint">Add safe templates, quick actions and visual themes without installing code.</p></div><span>›</span></summary><div class="details-body"><div id="extensionList" class="settings-list"></div><button class="secondary" data-action="install-extension" data-i18n="installExtension">Add a creative add-on</button></div></details>
+        <details id="extensionsPanel" class="settings-card"><summary><div><h2 data-i18n="extensions">Extensions</h2><p data-i18n="extensionHint">Add optional declarative behavior or presentation without changing the core framework.</p></div><span>›</span></summary><div class="details-body"><div id="extensionList" class="settings-list"></div><button class="secondary" data-action="install-extension" data-i18n="installExtension">Install extension</button></div></details>
       </section>
 
       <section id="view-chat" class="view chat-view" aria-labelledby="activeChatTitle">

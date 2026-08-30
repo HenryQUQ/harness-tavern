@@ -8,16 +8,37 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 |---|---|---|
 | GET | `/api/health` | Liveness, version, database integrity |
 | GET | `/api/bootstrap` | Player/creator bootstrap data |
-| GET | `/api/home` | Continue, characters, stories, drafts |
+| GET | `/api/home` | Continue items, Characters, and Stories |
 | GET | `/api/user-profile` | Local owner profile and onboarding state |
 | PATCH | `/api/user-profile` | Name, locale, default Persona, onboarding |
+
+## Library content framework
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/library/content-types` | Discover core content kinds, minimum required fields, editable model, and portable formats |
+| POST | `/api/library/items` | Add an explicit Character or Story structure to the Library |
+
+The write contract is deliberately narrow:
+
+```json
+{
+  "kind": "character",
+  "content": {
+    "name": "Explicit name",
+    "description": "Explicit description"
+  }
+}
+```
+
+`kind` and `content` are the only accepted top-level keys. The service may add empty structural defaults required by a standard file, but it does not expand briefs, prompts, template selectors, or creative instructions. Character creation requires `content.name`; Story creation requires `content.title` and at least one existing Character reference in `content.cast`.
 
 ## Characters and Personas
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/characters/:id` | Character detail and related chats/stories |
-| POST | `/api/characters` | Create Character |
+| POST | `/api/characters` | Low-level explicit Character create compatibility route |
 | PATCH | `/api/characters/:id` | Update Character |
 | DELETE | `/api/characters/:id` | Delete unused Character |
 | POST | `/api/personas` | Create Persona |
@@ -29,7 +50,7 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/stories/:id` | Story detail and Playthrough list |
-| POST | `/api/stories` | Create Story |
+| POST | `/api/stories` | Low-level explicit Story create compatibility route |
 | PATCH | `/api/stories/:id` | Update Story and Cast |
 | DELETE | `/api/stories/:id` | Delete Story |
 | GET | `/api/story-sources/:id` | Resolved canonical editable source and binding metadata |
@@ -54,7 +75,7 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | POST | `/api/conversations/:id/branches` | Create What-if Timeline |
 | POST | `/api/conversations/:id/branches/:branchId/switch` | Switch Timeline |
 
-## Guided creator
+## Complete content editors
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -62,14 +83,23 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 | PUT | `/api/creator/characters/:id` | Validate and save every authored Character field; update bound Story sources when present |
 | GET | `/api/creator/stories/:id` | Complete private Story authoring model and canonical source digest |
 | PUT | `/api/creator/stories/:id` | Validate and save Story overview, Cast, Lore, Scenes, causal runtime, metadata, and source files |
-| POST | `/api/creator/character-drafts` | Plain-language Character draft |
-| POST | `/api/creator/story-drafts` | Plain-language Story and Cast draft |
-| PATCH | `/api/creator/drafts/:id` | Edit/save Draft |
-| DELETE | `/api/creator/drafts/:id` | Delete Draft |
-| POST | `/api/creator/drafts/:id/publish` | Publish Character or Story, optionally start a Story Playthrough |
-| POST | `/api/extensions/from-story/:storyId` | Create declarative template extension |
 
 The complete editor `PUT` routes use an envelope: `{ "character": { ... }, "expected_token": "..." }` or `{ "story": { ... }, "expected_digest": "..." }`. A stale Character token returns `character_edit_conflict`; a stale Story digest returns `story_source_conflict`. This prevents an open browser editor from overwriting newer changes made in another tab or directly in a bound source file. Public Character and Story routes continue to omit creator notes, secrets, private Cast context, initial State, and other author-only fields.
+
+### Retired guided-creation compatibility
+
+The core no longer owns plain-language creative generation or Story-to-template authoring. These retired paths return HTTP 410 with `guided_creation_removed` or `core_template_authoring_removed`:
+
+```text
+/api/creator/character-drafts
+/api/creator/story-drafts
+/api/creator/drafts
+/api/creator/drafts/:id
+/api/creator/drafts/:id/publish
+/api/extensions/from-story/:storyId
+```
+
+Existing draft rows are preserved rather than deleted. They are available read-only through `GET /api/legacy/drafts` and `GET /api/legacy/drafts/:id` for manual migration into explicit standard content.
 
 ## Portable import and sharing
 

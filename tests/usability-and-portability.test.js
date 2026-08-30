@@ -35,42 +35,35 @@ await test('extension preview explains capabilities before installation', async 
   assert.ok(preview.body.warnings.some(message => /cannot (?:run|execute) code/i.test(message)))
 })
 
-await test('a story author can save a finished story as a reusable no-code template', async t => {
+await test('extension templates remain optional declarative data and do not drive core Library creation', async t => {
   const { app } = await testApp(t)
-  const story = app.repository.getStory(SAMPLE_IDS.story)
-  const saved = app.extensions.createStoryTemplate(story, { name: 'Three-way mystery pattern' })
-  assert.equal(saved.template.name, 'Three-way mystery pattern')
-  assert.equal(saved.template.defaults.cast_size, 3)
-  const draft = app.creator.generateStoryDraft({
-    template_id: saved.template.id,
-    brief: 'A new mystery unfolds inside a lighthouse that only appears during eclipses.',
-    title: 'The Eclipse Lighthouse',
+  app.extensions.install(friendlyExtension())
+  assert.ok(app.extensions.contributions().story_templates.some(item => item.id === 'quiet-cafe'))
+  const created = app.library.add({
+    kind: 'story',
+    content: {
+      title: 'Explicit empty structure',
+      cast: [{ character_id: SAMPLE_IDS.mira }],
+    },
   })
-  assert.equal(draft.data.cast.length, 3)
-  assert.ok(draft.data.world_rules.includes(story.world_rules[0]))
-  assert.equal(draft.data.cast[1].role, story.cast[1].role)
-  assert.equal(draft.data.cast[1].private_context, story.cast[1].private_context)
+  assert.equal(created.item.genre, '')
+  assert.equal(created.item.tone, '')
+  assert.deepEqual(created.item.world_rules, [])
 })
 
-await test('story-template creation is available through the friendly HTTP journey', async t => {
+await test('the core refuses to turn a finished Story into an opinionated creation template', async t => {
   const { baseUrl } = await testApp(t)
-  const saved = await jsonRequest(baseUrl, `/api/extensions/from-story/${SAMPLE_IDS.story}`, {
+  const removed = await jsonRequest(baseUrl, `/api/extensions/from-story/${SAMPLE_IDS.story}`, {
     method: 'POST',
     body: JSON.stringify({ name: 'Observatory-style ensemble' }),
   })
-  assert.equal(saved.response.status, 201)
-  const draft = await jsonRequest(baseUrl, '/api/creator/story-drafts', {
-    method: 'POST',
-    body: JSON.stringify({ template_id: saved.body.template.id, brief: 'Three diplomats are trapped in a silent orbital embassy.' }),
-  })
-  assert.equal(draft.response.status, 201)
-  assert.equal(draft.body.data.characters.length, 3)
-  assert.equal(draft.body.data.cast[0].role, saved.body.template.defaults.cast_blueprint[0].role)
+  assert.equal(removed.response.status, 410)
+  assert.equal(removed.body.error.code, 'core_template_authoring_removed')
 })
 
 await test('a complete Tavern library exports and imports through the same preview flow', async t => {
   const source = await testApp(t)
-  source.app.creator.generateCharacterDraft({ brief: 'A patient ferry captain who remembers every passenger.' })
+  source.app.library.add({ kind: 'character', content: { name: 'Ferry captain', description: 'Remembers every passenger.' } })
   const exported = await jsonRequest(source.baseUrl, '/api/exports/library')
   assert.equal(exported.response.status, 200)
   assert.equal(exported.body.kind, 'collection')
