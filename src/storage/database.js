@@ -271,6 +271,63 @@ const MIGRATIONS = [
       CREATE INDEX story_source_characters_character ON story_source_characters(character_id);
     `,
   },
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE stories ADD COLUMN runtime_json TEXT NOT NULL DEFAULT '{"actions":[],"agendas":[],"prompt_graph":{},"world_schema":{}}';
+
+      ALTER TABLE events ADD COLUMN stream_version INTEGER;
+      ALTER TABLE events ADD COLUMN causation_id TEXT;
+      ALTER TABLE events ADD COLUMN correlation_id TEXT;
+      ALTER TABLE events ADD COLUMN command_id TEXT;
+      UPDATE events SET stream_version = id WHERE stream_version IS NULL;
+      CREATE UNIQUE INDEX events_stream_version_unique
+        ON events(conversation_id, branch_id, stream_version);
+      CREATE INDEX events_command_id ON events(command_id) WHERE command_id IS NOT NULL;
+      CREATE INDEX events_correlation_id ON events(correlation_id) WHERE correlation_id IS NOT NULL;
+
+      CREATE TABLE control_loop_runs (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+        command_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        step_count INTEGER NOT NULL DEFAULT 0,
+        input_json TEXT NOT NULL,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        error_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(conversation_id, branch_id, command_id)
+      );
+      CREATE INDEX control_loop_runs_status ON control_loop_runs(status, updated_at);
+
+      CREATE TABLE state_snapshots (
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+        event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+        state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(conversation_id, branch_id, event_id)
+      );
+
+      CREATE TABLE migration_sessions (
+        id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        source_digest TEXT NOT NULL,
+        status TEXT NOT NULL,
+        inventory_json TEXT NOT NULL,
+        mapping_json TEXT NOT NULL DEFAULT '{}',
+        result_json TEXT NOT NULL DEFAULT '{}',
+        warnings_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX migration_sessions_updated ON migration_sessions(updated_at DESC);
+    `,
+  },
 ]
 
 export class Database {
@@ -402,13 +459,33 @@ export class Database {
     return candidate
   }
 
-  appendEvent({ conversationId, branchId, type, actorId = null, payload = {}, idempotencyKey = null }) {
+  appendEvent({
+    conversationId,
+    branchId,
+    type,
+    actorId = null,
+    payload = {},
+    idempotencyKey = null,
+    causationId = null,
+    correlationId = null,
+    commandId = null,
+    createdAt = null,
+  }) {
     const eventUid = id('evt')
     try {
+      const streamVersion = Number(this.raw.prepare(`
+        SELECT COALESCE(MAX(stream_version), 0) + 1 AS next_version
+        FROM events WHERE conversation_id = ? AND branch_id = ?
+      `).get(conversationId, branchId).next_version)
       const result = this.raw.prepare(`
-        INSERT INTO events(event_uid, conversation_id, branch_id, type, actor_id, payload_json, created_at, idempotency_key)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(eventUid, conversationId, branchId, type, actorId, stableStringify(payload), nowIso(), idempotencyKey)
+        INSERT INTO events(
+          event_uid, conversation_id, branch_id, type, actor_id, payload_json, created_at,
+          idempotency_key, stream_version, causation_id, correlation_id, command_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        eventUid, conversationId, branchId, type, actorId, stableStringify(payload), createdAt || nowIso(),
+        idempotencyKey, streamVersion, causationId, correlationId, commandId,
+      )
       return this.getEvent(Number(result.lastInsertRowid))
     } catch (error) {
       if (idempotencyKey && String(error.message).includes('UNIQUE')) {

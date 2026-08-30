@@ -64,4 +64,4 @@ Read `CHANGELOG.md` and take a verified backup before upgrading. Rollback is saf
 
 ## Monitoring
 
-Monitor process restarts, health failures, filesystem capacity, backup age, provider latency/error rates, and model finish reasons. Treat repeated `length` finishes as a provider/model capacity issue; incomplete model output is intentionally not committed to the transcript.
+Monitor process restarts, health failures, filesystem capacity, backup age, suspended Control Loops, provider latency/error rates, and model finish reasons. Treat repeated `length` finishes as a provider/model capacity issue. The received command remains durable while malformed or incomplete model output is excluded from character prose; resume after correcting the connection does not replay committed effects.

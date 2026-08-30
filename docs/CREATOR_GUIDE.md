@@ -25,7 +25,7 @@ You do not need to describe prompts, memory systems, or state schemas.
 6. Review each cast member’s role and private context.
 7. Publish and Playtest.
 
-Publishing creates a versioned editable Story source. Open the Story and choose **Edit Story source** to inspect or change the self-contained JSON, or download it for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks and Markdown scenes in separate files. Single-character and multi-character Stories use the same format.
+Publishing creates a versioned editable Story source. Open the Story and choose **Edit Story source** to inspect or change the self-contained JSON, or download it for a text editor. For a larger project, export with `npm run story:export -- <story-key> <directory> --project` and keep Characters, Lorebooks, Markdown scenes, Actions and Agendas in separate files. Narrator-only, single-character and multi-character Stories use the same v2 format.
 
 A useful brief sounds like:
 
@@ -58,6 +58,8 @@ Hard rules should describe facts the narration cannot casually ignore, for examp
 - midnight occurs after the world clock reaches zero;
 - the player’s thoughts and actions are never selected by the system.
 
+Rules written only as prose can guide narration but cannot enforce causality. Put facts in `initial_state`, define allowed transitions as typed `actions`, and give long-running character goals durable `agendas`. Add `complete_when`, `fail_when`, `pause_when`, or `resume_when` only when a projected fact should change an Agenda's lifecycle; without those conditions the model cannot end persistent Intent by assertion. Use `state_visibility` when a fact must be available to the Director or one Character but hidden from other narrators and the player.
+
 ## Playtest checklist
 
 - Ask each character the same question separately. Do their answers differ?
@@ -69,4 +71,4 @@ Hard rules should describe facts the narration cannot casually ignore, for examp
 
 ## Share the story
 
-Use **Public preview** when the goal is discovery. Use **Download editable Story source** when another creator should read, version or modify the Story. Use **Download portable Tavern pack** for signed legacy import compatibility. State the license and whether remixing is allowed.
+Use **Public preview** when the goal is discovery. Use **Download editable Story source** when another creator should read, version or modify the Story. Use **Download portable Tavern pack** for integrity-checked instance compatibility, or export a playthrough when the causal history should continue elsewhere. State the license and whether remixing is allowed.

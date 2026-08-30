@@ -1,5 +1,6 @@
 import { assert, cleanText, id, json, nowIso, stableStringify, uniqueStrings } from '../util.js'
 import { assertThinkingIntensity } from '../runtime/thinking.js'
+import { normalizeStoryAgendas } from '../runtime/action-registry.js'
 import { normalizeGeneration, normalizePrompt } from './generation-config.js'
 
 function characterFromRow(row) {
@@ -42,6 +43,7 @@ function storyFromRow(row, cast = []) {
     scenes: json(row.scenes_json, []),
     metadata: json(row.metadata_json, {}),
     share_policy: json(row.share_policy_json, {}),
+    runtime: json(row.runtime_json, { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
     cast,
     world_rules_json: undefined,
     lore_json: undefined,
@@ -51,6 +53,7 @@ function storyFromRow(row, cast = []) {
     scenes_json: undefined,
     metadata_json: undefined,
     share_policy_json: undefined,
+    runtime_json: undefined,
   }
 }
 
@@ -211,8 +214,9 @@ export class TavernRepository {
         INSERT INTO stories(
           id, title, summary, premise, genre, tone, opening_scene, world_rules_json, lore_json,
           initial_state_json, author_notes, created_at, updated_at, slug, hook, cover_url, player_role,
-          content_warnings_json, tags_json, scenes_json, metadata_json, share_policy_json, revision, visibility
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          content_warnings_json, tags_json, scenes_json, metadata_json, share_policy_json, revision, visibility,
+          runtime_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         storyId, title, cleanText(input.summary, 4000), cleanText(input.premise, 30_000), cleanText(input.genre, 300),
         cleanText(input.tone, 1000), cleanText(input.opening_scene, 30_000), stableStringify(uniqueStrings(input.world_rules, 100, 3000)),
@@ -223,6 +227,7 @@ export class TavernRepository {
         stableStringify(Array.isArray(input.scenes) ? input.scenes.slice(0, 100) : []), stableStringify(input.metadata ?? {}),
         stableStringify(input.share_policy ?? {}), Number.isInteger(input.revision) ? input.revision : 1,
         ['private', 'unlisted', 'public'].includes(input.visibility) ? input.visibility : 'private',
+        stableStringify(input.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
       )
       this.#replaceStoryCast(storyId, input.cast ?? [])
     })
@@ -240,7 +245,7 @@ export class TavernRepository {
         UPDATE stories SET title=?, summary=?, premise=?, genre=?, tone=?, opening_scene=?, world_rules_json=?,
           lore_json=?, initial_state_json=?, author_notes=?, slug=?, hook=?, cover_url=?, player_role=?,
           content_warnings_json=?, tags_json=?, scenes_json=?, metadata_json=?, share_policy_json=?, revision=?,
-          visibility=?, updated_at=? WHERE id=?
+          visibility=?, runtime_json=?, updated_at=? WHERE id=?
       `).run(
         title, cleanText(merged.summary, 4000), cleanText(merged.premise, 30_000), cleanText(merged.genre, 300),
         cleanText(merged.tone, 1000), cleanText(merged.opening_scene, 30_000),
@@ -251,7 +256,9 @@ export class TavernRepository {
         stableStringify(uniqueStrings(merged.content_warnings, 50, 500)), stableStringify(uniqueStrings(merged.tags, 50, 100)),
         stableStringify(Array.isArray(merged.scenes) ? merged.scenes.slice(0, 100) : []), stableStringify(merged.metadata ?? {}),
         stableStringify(merged.share_policy ?? {}), Number(current.revision || 1) + 1,
-        ['private', 'unlisted', 'public'].includes(merged.visibility) ? merged.visibility : 'private', nowIso(), current.id,
+        ['private', 'unlisted', 'public'].includes(merged.visibility) ? merged.visibility : 'private',
+        stableStringify(merged.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
+        nowIso(), current.id,
       )
       if (input.cast !== undefined) this.#replaceStoryCast(current.id, input.cast)
     })
@@ -414,7 +421,7 @@ export class TavernRepository {
         conversationId, branchId, type: 'conversation.created',
         payload: { title, story_id: story?.id ?? null, playthrough_id: input.playthrough_id ?? null, thinking_intensity: intensity },
       })
-      this.#appendOpening(conversationId, branchId, story)
+      if (!input.skip_opening) this.#appendOpening(conversationId, branchId, story)
     })
     this.db.audit('conversation.created', 'conversation', conversationId)
     return this.getConversation(conversationId)
@@ -422,6 +429,11 @@ export class TavernRepository {
 
   #appendOpening(conversationId, branchId, story) {
     const cast = this.listConversationCast(conversationId)
+    if (story) {
+      for (const agenda of normalizeStoryAgendas(story, cast)) {
+        this.db.appendEvent({ conversationId, branchId, type: 'agenda.created', actorId: agenda.owner_id, payload: agenda })
+      }
+    }
     const firstScene = story?.scenes?.[0]
     if (firstScene) {
       this.db.appendEvent({

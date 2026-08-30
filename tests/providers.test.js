@@ -135,7 +135,7 @@ await test('DeepSeek explicitly disables thinking and leaves automatic output un
   assert.equal(body.seed, undefined)
 })
 
-await test('DeepSeek enables requested reasoning without sending ignored samplers or an output cap', async t => {
+await test('DeepSeek maps maximum reasoning strength without sending ignored samplers or an output cap', async t => {
   const capture = await captureServer(t, (record, response) => {
     response.writeHead(200, { 'content-type': 'application/json' })
     response.end(JSON.stringify({
@@ -144,16 +144,43 @@ await test('DeepSeek enables requested reasoning without sending ignored sampler
     }))
   })
   const adapter = new OpenAiCompatibleAdapter({ timeoutMs: 5000 })
-  const result = await adapter.complete({ ...request, thinkingIntensity: 'high', maxOutputTokens: null }, {
+  const result = await adapter.complete({ ...request, thinkingIntensity: 'max', maxOutputTokens: null }, {
     provider_id: 'deepseek', base_url: capture.baseUrl, config_json: '{}',
   }, 'deepseek-key')
   const body = capture.requests[0].json
   assert.deepEqual(body.thinking, { type: 'enabled' })
-  assert.equal(body.reasoning_effort, 'high')
+  assert.equal(body.reasoning_effort, 'max')
   assert.equal(body.max_tokens, undefined)
   assert.equal(body.temperature, undefined)
   assert.equal(body.top_p, undefined)
   assert.equal(result.reasoningContent, 'private')
+})
+
+await test('DeepSeek retries its documented empty JSON response without adding an output cap', async t => {
+  const capture = await captureServer(t, (record, response, count) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(count === 1 ? {
+      choices: [{ message: { reasoning_content: 'private', content: '   \n  ' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 6, total_tokens: 11, completion_tokens_details: { reasoning_tokens: 2 } },
+    } : {
+      choices: [{ message: { content: '{"content":"Recovered"}' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 },
+    }))
+  })
+  const adapter = new OpenAiCompatibleAdapter({ timeoutMs: 5000 })
+  const result = await adapter.complete({ ...request, thinkingIntensity: 'high', maxOutputTokens: null }, {
+    provider_id: 'deepseek', base_url: capture.baseUrl, config_json: '{}',
+  }, 'deepseek-key')
+  assert.equal(capture.requests.length, 2)
+  assert.deepEqual(capture.requests[0].json.thinking, { type: 'enabled' })
+  assert.deepEqual(capture.requests[1].json.thinking, { type: 'disabled' })
+  assert.match(capture.requests[1].json.messages[0].content, /non-empty JSON/i)
+  assert.equal(capture.requests[0].json.max_tokens, undefined)
+  assert.equal(capture.requests[1].json.max_tokens, undefined)
+  assert.equal(result.content, '{"content":"Recovered"}')
+  assert.equal(result.fallback, 'deepseek-empty-json-non-thinking-retry')
+  assert.equal(result.usage.totalTokens, 33)
+  assert.equal(result.usage.reasoningTokens, 2)
 })
 
 await test('Anthropic thinking budget is separate from visible response budget', async t => {

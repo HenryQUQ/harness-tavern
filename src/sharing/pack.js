@@ -9,7 +9,7 @@ function withoutIntegrity(pack) {
   return content
 }
 
-function signedPack(content) {
+function integrityPack(content) {
   const pack = {
     format: PACK_FORMAT,
     format_version: PACK_VERSION,
@@ -75,6 +75,7 @@ function publicStory(story) {
     metadata: story.metadata,
     share_policy: story.share_policy,
     visibility: story.visibility,
+    runtime: story.runtime,
     cast: story.cast.map(member => ({
       character_id: member.character_id,
       role: member.role,
@@ -83,6 +84,18 @@ function publicStory(story) {
       metadata: member.metadata,
     })),
   }
+}
+
+function remapReferences(value, mapping) {
+  if (typeof value === 'string') {
+    if (mapping[value]) return mapping[value]
+    let output = value
+    for (const [before, after] of Object.entries(mapping)) if (before && after && output.includes(before)) output = output.replaceAll(before, after)
+    return output
+  }
+  if (Array.isArray(value)) return value.map(item => remapReferences(item, mapping))
+  if (!plainObject(value)) return value
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, remapReferences(nested, mapping)]))
 }
 
 export function cardToCharacter(card) {
@@ -154,6 +167,24 @@ export function characterToCardV2(character) {
   }
 }
 
+export function characterToCardV3(character) {
+  const v2 = characterToCardV2(character)
+  return {
+    spec: 'chara_card_v3',
+    spec_version: '3.0',
+    data: {
+      ...v2.data,
+      group_only_greetings: character.metadata?.group_only_greetings || [],
+      nickname: character.metadata?.nickname || '',
+      creator_notes_multilingual: character.metadata?.creator_notes_multilingual || {},
+      source: Array.isArray(character.metadata?.source) ? character.metadata.source : [],
+      creation_date: Math.floor(Date.parse(character.created_at || nowIso()) / 1000),
+      modification_date: Math.floor(Date.parse(character.updated_at || nowIso()) / 1000),
+      assets: Array.isArray(character.metadata?.assets) ? character.metadata.assets : [],
+    },
+  }
+}
+
 export class SharingService {
   constructor({ repository, extensions, storySources = null, config }) {
     this.repository = repository
@@ -164,13 +195,13 @@ export class SharingService {
 
   exportCharacter(characterId) {
     const character = this.repository.getCharacter(characterId)
-    return signedPack({ kind: 'character', title: character.name, items: { characters: [publicCharacter(character)], stories: [], personas: [] } })
+    return integrityPack({ kind: 'character', title: character.name, items: { characters: [publicCharacter(character)], stories: [], personas: [] } })
   }
 
   exportStory(storyId) {
     const story = this.repository.getStory(storyId)
     const characters = story.cast.map(member => publicCharacter(member.character))
-    return signedPack({ kind: 'story', title: story.title, items: { characters, stories: [publicStory(story)], personas: [] } })
+    return integrityPack({ kind: 'story', title: story.title, items: { characters, stories: [publicStory(story)], personas: [] } })
   }
 
   exportCollection({ character_ids = [], story_ids = [], persona_ids = [], title = 'Tavern collection' } = {}) {
@@ -184,7 +215,68 @@ export class SharingService {
       assert(persona, 'Persona not found', 404, 'not_found')
       return { id: persona.id, slug: persona.slug, name: persona.name, description: persona.description, style: persona.style, avatar_url: persona.avatar_url, metadata: persona.metadata }
     })
-    return signedPack({ kind: 'collection', title: cleanText(title, 200), items: { characters, stories, personas } })
+    return integrityPack({ kind: 'collection', title: cleanText(title, 200), items: { characters, stories, personas } })
+  }
+
+  #portableConversation(conversationId) {
+    const conversation = this.repository.getConversation(conversationId)
+    return {
+      id: conversation.id,
+      title: conversation.title,
+      story_id: conversation.story_id,
+      persona_id: conversation.persona_id,
+      character_ids: this.repository.listConversationCast(conversation.id).map(member => member.character_id),
+      thinking_intensity: conversation.thinking_intensity,
+      generation: conversation.generation,
+      prompt: conversation.prompt,
+      events: this.repository.events(conversation.id).map(event => ({
+        event_uid: event.event_uid,
+        type: event.type,
+        actor_id: event.actor_id,
+        payload: event.payload,
+        created_at: event.created_at,
+        causation_id: event.causation_id,
+        correlation_id: event.correlation_id,
+        command_id: event.command_id,
+      })),
+      exported_branch_id: conversation.current_branch_id,
+    }
+  }
+
+  exportConversation(conversationId) {
+    const conversation = this.repository.getConversation(conversationId)
+    const story = conversation.story_id ? this.repository.getStory(conversation.story_id) : null
+    const characterIds = new Set(this.repository.listConversationCast(conversation.id).map(member => member.character_id))
+    if (story) for (const member of story.cast) characterIds.add(member.character_id)
+    const persona = conversation.persona_id ? this.repository.getPersona(conversation.persona_id) : null
+    return integrityPack({
+      kind: 'playthrough',
+      title: conversation.title,
+      items: {
+        characters: [...characterIds].map(characterId => publicCharacter(this.repository.getCharacter(characterId))),
+        stories: story ? [publicStory(story)] : [],
+        personas: persona ? [persona] : [],
+        conversations: [this.#portableConversation(conversation.id)],
+      },
+    })
+  }
+
+  exportBackup() {
+    const profile = this.repository.getUserProfile()
+    return integrityPack({
+      kind: 'backup',
+      title: `${profile.name || 'My'} Harness Tavern backup`,
+      privacy: { credentials_included: false, provider_connections_included: false },
+      user_profile: profile,
+      generation_presets: this.repository.db.raw.prepare('SELECT name, description, settings_json FROM generation_presets WHERE builtin = 0 ORDER BY name').all()
+        .map(row => ({ name: row.name, description: row.description, settings: json(row.settings_json, {}) })),
+      items: {
+        characters: this.repository.listCharacters().map(publicCharacter),
+        stories: this.repository.listStories().map(publicStory),
+        personas: this.repository.listPersonas(),
+        conversations: this.repository.listConversations({ includeArchived: true }).map(item => this.#portableConversation(item.id)),
+      },
+    })
   }
 
   normalize(input) {
@@ -197,7 +289,7 @@ export class SharingService {
     if (value.format === EXTENSION_FORMAT) return { format: EXTENSION_FORMAT, manifest: value }
     if (value.spec?.startsWith?.('chara_card_') || value.name || value.data?.name) {
       const character = cardToCharacter(value)
-      return signedPack({ kind: 'character', title: character.name, source_format: value.spec || 'legacy-character-card', items: { characters: [character], stories: [], personas: [] } })
+      return integrityPack({ kind: 'character', title: character.name, source_format: value.spec || 'legacy-character-card', items: { characters: [character], stories: [], personas: [] } })
     }
     throw Object.assign(new Error('Unsupported import format'), { status: 400, code: 'unsupported_import' })
   }
@@ -229,7 +321,7 @@ export class SharingService {
     }
   }
 
-  import(input, { strategy = 'copy', source_name = 'import' } = {}) {
+  import(input, { strategy = 'copy', source_name = 'import', sync_sources = true } = {}) {
     assert(['copy', 'replace', 'skip'].includes(strategy), 'Import strategy must be copy, replace or skip')
     const preview = this.preview(input)
     if (preview.kind === 'extension') {
@@ -238,13 +330,15 @@ export class SharingService {
       return { result, receipt: this.repository.recordImport({ packFormat: EXTENSION_FORMAT, sourceName: source_name, strategy, result: { extension_id: extension.id } }) }
     }
     const pack = preview.normalized
-    const result = { characters: [], stories: [], personas: [], skipped: [], id_map: {} }
-    this.repository.db.transaction(() => {
+    const result = { characters: [], stories: [], personas: [], conversations: [], presets: [], skipped: [], id_map: {} }
+    const referenceMap = {}
+    const completed = this.repository.db.transaction(() => {
       for (const source of pack.items?.characters ?? []) {
         const existing = this.repository.listCharacters().find(item => item.slug === source.slug || item.name.toLocaleLowerCase() === String(source.name).toLocaleLowerCase())
         if (existing && strategy === 'skip') {
           result.skipped.push({ type: 'character', name: source.name, existing_id: existing.id })
           result.id_map[source.id] = existing.id
+          if (source.slug) referenceMap[source.slug] = existing.slug
           continue
         }
         const saved = existing && strategy === 'replace'
@@ -252,6 +346,8 @@ export class SharingService {
           : this.repository.createCharacter({ ...source, id: undefined, slug: strategy === 'copy' ? undefined : source.slug })
         result.characters.push(saved)
         if (source.id) result.id_map[source.id] = saved.id
+        if (source.id) referenceMap[source.id] = saved.id
+        if (source.slug) referenceMap[source.slug] = saved.slug
       }
       for (const source of pack.items?.personas ?? []) {
         const existing = this.repository.listPersonas().find(item => item.slug === source.slug || item.name.toLocaleLowerCase() === String(source.name).toLocaleLowerCase())
@@ -282,6 +378,7 @@ export class SharingService {
             ...scene,
             active_character_ids: (scene.active_character_ids ?? []).map(characterId => result.id_map[characterId] ?? characterId),
           })),
+          runtime: remapReferences(source.runtime ?? {}, { ...result.id_map, ...referenceMap }),
         }
         const saved = existing && strategy === 'replace'
           ? this.repository.updateStory(existing.id, { ...mapped, slug: existing.slug })
@@ -289,16 +386,97 @@ export class SharingService {
         result.stories.push(saved)
         if (source.id) result.id_map[source.id] = saved.id
       }
+      for (const source of pack.items?.conversations ?? []) {
+        const storyId = result.id_map[source.story_id] ?? null
+        const personaId = result.id_map[source.persona_id] ?? null
+        const characterIds = (source.character_ids ?? []).map(characterId => result.id_map[characterId]).filter(Boolean)
+        if (!storyId && !characterIds.length) {
+          result.skipped.push({ type: 'conversation', name: source.title, reason: 'No imported Story or Character matched this conversation.' })
+          continue
+        }
+        const conversation = this.repository.createConversation({
+          title: source.title,
+          story_id: storyId,
+          persona_id: personaId,
+          character_ids: characterIds,
+          thinking_intensity: source.thinking_intensity,
+          generation: source.generation,
+          prompt: source.prompt,
+          skip_opening: true,
+        })
+        const eventUidMap = new Map()
+        const correlationMap = new Map()
+        const commandMap = new Map()
+        const createdEvent = this.repository.events(conversation.id).find(event => event.type === 'conversation.created')
+        const mapOpaqueId = (mapping, value, prefix) => {
+          if (!value) return null
+          if (!mapping.has(value)) mapping.set(value, id(prefix))
+          return mapping.get(value)
+        }
+        for (const event of source.events ?? []) {
+          if (event.type === 'conversation.created') {
+            if (event.event_uid && createdEvent) eventUidMap.set(event.event_uid, createdEvent.event_uid)
+            continue
+          }
+          const appended = this.repository.db.appendEvent({
+            conversationId: conversation.id,
+            branchId: conversation.current_branch_id,
+            type: event.type,
+            actorId: result.id_map[event.actor_id] ?? event.actor_id,
+            payload: remapReferences(event.payload, { ...result.id_map, ...referenceMap }),
+            createdAt: event.created_at,
+            causationId: eventUidMap.get(event.causation_id) ?? null,
+            correlationId: mapOpaqueId(correlationMap, event.correlation_id, 'corr'),
+            commandId: mapOpaqueId(commandMap, event.command_id, 'cmd'),
+          })
+          if (event.event_uid) eventUidMap.set(event.event_uid, appended.event_uid)
+        }
+        this.repository.touchConversation(conversation.id, [...(source.events ?? [])].reverse().find(event => /\.message$/.test(event.type))?.payload?.content || '')
+        result.conversations.push(this.repository.getConversation(conversation.id))
+        if (source.id) result.id_map[source.id] = conversation.id
+      }
+      for (const source of pack.generation_presets ?? []) {
+        try {
+          const presetId = id('preset')
+          const timestamp = nowIso()
+          this.repository.db.raw.prepare(`
+            INSERT INTO generation_presets(id, name, description, settings_json, builtin, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 0, ?, ?)
+          `).run(presetId, cleanText(source.name, 120) || 'Imported preset', cleanText(source.description, 1000), stableStringify(source.settings ?? {}), timestamp, timestamp)
+          result.presets.push(presetId)
+        } catch (error) {
+          result.skipped.push({ type: 'generation_preset', name: source.name, reason: error.message })
+        }
+      }
+      if (pack.kind === 'backup' && plainObject(pack.user_profile)) this.repository.updateUserProfile(pack.user_profile)
+      const receipt = this.repository.recordImport({
+        packFormat: pack.source_format || pack.format,
+        sourceName: source_name,
+        strategy,
+        result: { characters: result.characters.map(item => item.id), stories: result.stories.map(item => item.id), personas: result.personas.map(item => item.id), conversations: result.conversations.map(item => item.id), presets: result.presets, skipped: result.skipped },
+      })
+      return { result, receipt }
     })
-    for (const character of result.characters) this.storySources?.syncRuntimeCharacter(character.id, { character })
-    for (const story of result.stories) this.storySources?.syncRuntimeStory(story.id)
-    const receipt = this.repository.recordImport({
-      packFormat: pack.source_format || pack.format,
-      sourceName: source_name,
-      strategy,
-      result: { characters: result.characters.map(item => item.id), stories: result.stories.map(item => item.id), personas: result.personas.map(item => item.id), skipped: result.skipped },
-    })
-    return { result, receipt }
+    if (sync_sources) {
+      const sourceSyncWarnings = []
+      for (const character of result.characters) {
+        try { this.storySources?.syncRuntimeCharacter(character.id, { character }) } catch (error) {
+          sourceSyncWarnings.push({ type: 'character', id: character.id, message: error.message })
+        }
+      }
+      for (const story of result.stories) {
+        try { this.storySources?.syncRuntimeStory(story.id) } catch (error) {
+          sourceSyncWarnings.push({ type: 'story', id: story.id, message: error.message })
+        }
+      }
+      if (sourceSyncWarnings.length) {
+        result.source_sync_warnings = sourceSyncWarnings
+        completed.receipt.result.source_sync_warnings = sourceSyncWarnings
+        this.repository.db.raw.prepare('UPDATE import_receipts SET result_json = ? WHERE id = ?')
+          .run(stableStringify(completed.receipt.result), completed.receipt.id)
+      }
+    }
+    return completed
   }
 
   encode(pack) {
@@ -334,5 +512,10 @@ export class SharingService {
   toCharacterCardV2(characterId) {
     const character = this.repository.getCharacter(characterId)
     return characterToCardV2(character)
+  }
+
+  toCharacterCardV3(characterId) {
+    const character = this.repository.getCharacter(characterId)
+    return characterToCardV3(character)
   }
 }

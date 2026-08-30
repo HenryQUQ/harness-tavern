@@ -1,0 +1,6 @@
+{
+  "owner": "lyra-voss",
+  "objective": "Prevent an uncontrolled gate opening.",
+  "priority": 90,
+  "visibility": "public"
+}

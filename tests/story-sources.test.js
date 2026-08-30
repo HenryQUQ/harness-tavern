@@ -16,7 +16,7 @@ await test('every runtime Story has a canonical editable source without database
   const loaded = app.storySources.get(SAMPLE_IDS.story)
   const text = JSON.stringify(loaded.source)
   assert.equal(loaded.source.format, 'harness-tavern-story')
-  assert.equal(loaded.source.format_version, 1)
+  assert.equal(loaded.source.format_version, 2)
   assert.equal(loaded.source.characters.length, 3)
   assert.equal(loaded.source.cast.length, 3)
   assert.equal(loaded.binding.kind, 'single')
@@ -106,6 +106,26 @@ await test('the checked-in multi-file example is valid and directly loadable', (
   assert.equal(loaded.source.lorebooks[0].book.entries[1].visibility, 'director')
 })
 
+await test('the Story source schema does not impose an arbitrary twenty-character cast ceiling', async t => {
+  const { app } = await testApp(t)
+  const source = structuredClone(app.storySources.get(SAMPLE_IDS.story).source)
+  const card = source.characters[0].card
+  source.story_key = 'large-ensemble'
+  source.story.title = 'Large ensemble'
+  source.characters = Array.from({ length: 24 }, (_value, index) => ({
+    key: `ensemble-${index + 1}`,
+    card: { ...structuredClone(card), data: { ...structuredClone(card.data), name: `Ensemble ${index + 1}` } },
+  }))
+  source.cast = source.characters.map(character => ({ character: character.key, role: 'Ensemble member' }))
+  source.scenes = [{ ...source.scenes[0], active_characters: source.characters.map(character => character.key) }]
+  source.agendas = []
+  source.state_visibility = []
+  const loaded = loadStorySource(source).source
+  assert.equal(loaded.characters.length, 24)
+  assert.equal(loaded.cast.length, 24)
+  assert.equal(loaded.scenes[0].active_characters.length, 24)
+})
+
 await test('common SillyTavern World Info entries normalize into the Story lorebook contract', () => {
   const loaded = loadStorySourcePath(EXAMPLE_PROJECT)
   const manifest = structuredClone(loaded.manifest)
@@ -118,6 +138,8 @@ await test('common SillyTavern World Info entries normalize into the Story loreb
       'project/lore/world-info.json': JSON.stringify({ entries: { 0: { uid: 0, key: ['alignment', 'gate'], comment: 'Hidden gate', content: 'The alignment opens an erased gate.', constant: true } } }),
       ...Object.fromEntries(loaded.manifest.characters.map(character => [`project/${character.source}`, readFileSync(join(EXAMPLE_PROJECT, character.source), 'utf8')])),
       ...Object.fromEntries(loaded.manifest.scenes.map(scene => [`project/${scene.source}`, readFileSync(join(EXAMPLE_PROJECT, scene.source), 'utf8')])),
+      ...Object.fromEntries(loaded.manifest.actions.map(action => [`project/${action.source}`, readFileSync(join(EXAMPLE_PROJECT, action.source), 'utf8')])),
+      ...Object.fromEntries(loaded.manifest.agendas.map(agenda => [`project/${agenda.source}`, readFileSync(join(EXAMPLE_PROJECT, agenda.source), 'utf8')])),
     },
   }
   const normalized = loadStorySource(bundle).source.lorebooks[0].book.entries[0]
@@ -209,6 +231,12 @@ await test('a browser folder bundle imports the complete multi-file project', as
     'lore/observatory.lorebook.json',
     'scenes/001-opening.md',
     'scenes/002-archive.md',
+    'actions/take.action.json',
+    'actions/unlock.action.json',
+    'actions/open.action.json',
+    'agendas/mira-protect-archive.agenda.json',
+    'agendas/rowan-survive.agenda.json',
+    'agendas/lyra-stop-gate.agenda.json',
   ]
   const files = Object.fromEntries(names.map(name => [`observatory-project/${name}`, readFileSync(join(EXAMPLE_PROJECT, name), 'utf8')]))
   const bundle = { format: STORY_PROJECT_BUNDLE_FORMAT, manifest_path: 'observatory-project/story.tavern.json', files }

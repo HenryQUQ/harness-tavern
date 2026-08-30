@@ -16,7 +16,7 @@ import { assert, cleanText, nowIso, plainObject, sha256Hex, slugify, stableStrin
 import { cardToCharacter, characterToCardV2 } from '../sharing/pack.js'
 
 export const STORY_SOURCE_FORMAT = 'harness-tavern-story'
-export const STORY_SOURCE_VERSION = 1
+export const STORY_SOURCE_VERSION = 2
 export const STORY_PROJECT_BUNDLE_FORMAT = 'harness-tavern-story-project-files'
 export const STORY_SCHEMA_URL = 'https://raw.githubusercontent.com/HenryQUQ/harness-tavern/main/schemas/story.schema.json'
 
@@ -58,7 +58,7 @@ function schemaErrors(errors = []) {
 
 function validateManifest(manifest) {
   if (!validateStorySchema(manifest)) {
-    throw sourceError(`Story source does not match v1 schema: ${schemaErrors(validateStorySchema.errors)}`, 'story_schema_invalid')
+    throw sourceError(`Story source does not match the Story schema: ${schemaErrors(validateStorySchema.errors)}`, 'story_schema_invalid')
   }
   return manifest
 }
@@ -75,6 +75,8 @@ function validateSemantics(source) {
   assertUniqueKeys(source.characters, 'Character')
   assertUniqueKeys(source.lorebooks ?? [], 'Lorebook')
   assertUniqueKeys(source.scenes ?? [], 'Scene')
+  assertUniqueKeys(source.actions ?? [], 'Action')
+  assertUniqueKeys(source.agendas ?? [], 'Agenda')
   const characterKeys = new Set(source.characters.map(item => item.key))
   const castKeys = new Set()
   for (const member of source.cast) {
@@ -86,6 +88,10 @@ function validateSemantics(source) {
     for (const characterKey of scene.active_characters ?? []) {
       assert(characterKeys.has(characterKey), `Scene “${scene.key}” references missing character “${characterKey}”`, 400, 'missing_character_reference')
     }
+  }
+  for (const agenda of source.agendas ?? []) {
+    const owner = agenda.owner ?? agenda.owner_id
+    assert(owner === 'user' || characterKeys.has(owner), `Agenda “${agenda.key}” references missing owner “${owner}”`, 400, 'missing_character_reference')
   }
   const loreEntryKeys = new Set()
   for (const book of source.lorebooks ?? []) {
@@ -209,6 +215,12 @@ function resolveManifest(manifest, resolver) {
     ...item.source ? { content: resolver.read(item.source) } : {},
     source: undefined,
   }))
+  resolved.actions = (manifest.actions ?? []).map(item => item.source
+    ? { ...parseJson(resolver.read(item.source), `Action “${item.key}”`), key: item.key, source: undefined }
+    : item)
+  resolved.agendas = (manifest.agendas ?? []).map(item => item.source
+    ? { ...parseJson(resolver.read(item.source), `Agenda “${item.key}”`), key: item.key, source: undefined }
+    : item)
   const clean = JSON.parse(stableStringify(resolved))
   validateManifest(clean)
   return validateSemantics(clean)
@@ -250,7 +262,7 @@ export function loadStorySourcePath(inputPath) {
   assert(existsSync(manifestPath) && statSync(manifestPath).isFile(), `Story manifest not found: ${manifestPath}`, 404, 'story_manifest_missing')
   const resolver = fileResolver(manifestPath)
   const manifest = parseJson(readFileSync(manifestPath, 'utf8'), 'Story manifest')
-  const project = [...manifest.characters ?? [], ...manifest.lorebooks ?? [], ...manifest.scenes ?? []].some(item => item.source)
+  const project = [...manifest.characters ?? [], ...manifest.lorebooks ?? [], ...manifest.scenes ?? [], ...manifest.actions ?? [], ...manifest.agendas ?? []].some(item => item.source)
   return { source: resolveManifest(manifest, resolver), manifest, kind: project ? 'project' : 'single', manifestPath }
 }
 
@@ -342,6 +354,14 @@ export function storyToSource(story, { characterKeyById = new Map() } = {}) {
     })),
     ...lorebook.entries.length ? { lorebooks: [{ key: 'story-lore', book: lorebook }] } : {},
     ...scenes.length ? { scenes } : {},
+    ...story.runtime?.world_schema && Object.keys(story.runtime.world_schema).length ? { world_schema: deepMapStrings(story.runtime.world_schema, replacements) } : {},
+    ...story.runtime?.actions?.length ? { actions: deepMapStrings(story.runtime.actions.map(action => ({ ...action, key: action.key ?? action.id })), replacements) } : {},
+    ...story.runtime?.agendas?.length ? { agendas: deepMapStrings(story.runtime.agendas.map(agenda => {
+      const { id: agendaId, owner_id: ownerId, ...portable } = agenda
+      return { ...portable, key: agenda.key ?? agendaId, owner: agenda.owner ?? ownerId }
+    }), replacements) } : {},
+    ...story.runtime?.prompt_graph && Object.keys(story.runtime.prompt_graph).length ? { prompt_graph: deepMapStrings(story.runtime.prompt_graph, replacements) } : {},
+    ...story.runtime?.state_visibility?.length ? { state_visibility: deepMapStrings(story.runtime.state_visibility, replacements) } : {},
   }
   return loadStorySource(source).source
 }
@@ -399,6 +419,16 @@ function projectFiles(source) {
     files.set(path, `${item.content ?? ''}`)
     const { content, ...descriptor } = item
     return { ...descriptor, source: path }
+  })
+  manifest.actions = (source.actions ?? []).map(item => {
+    const path = `actions/${item.key}.action.json`
+    files.set(path, prettyJson(item))
+    return { key: item.key, source: path }
+  })
+  manifest.agendas = (source.agendas ?? []).map(item => {
+    const path = `agendas/${item.key}.agenda.json`
+    files.set(path, prettyJson(item))
+    return { key: item.key, source: path }
   })
   files.set('story.tavern.json', prettyJson(manifest))
   return files
@@ -518,6 +548,13 @@ function runtimeStory(source, characterIds) {
     cover_url: source.story.cover ?? '',
     lore,
     scenes,
+    runtime: {
+      world_schema: deepMapStrings(source.world_schema ?? {}, replacements),
+      actions: deepMapStrings(source.actions ?? [], replacements),
+      agendas: deepMapStrings((source.agendas ?? []).map(agenda => ({ ...agenda, id: agenda.key, owner_id: agenda.owner ?? agenda.owner_id })), replacements),
+      prompt_graph: deepMapStrings(source.prompt_graph ?? {}, replacements),
+      state_visibility: deepMapStrings(source.state_visibility ?? [], replacements),
+    },
     cast: source.cast.map(member => ({
       character_id: characterIds.get(member.character),
       role: member.role,
@@ -714,6 +751,7 @@ export class StorySourceService {
       content_warnings: input.content_warnings ?? [],
       tags: input.tags ?? [],
       scenes: input.scenes ?? [],
+      runtime: input.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} },
       metadata: input.metadata ?? {},
       share_policy: input.share_policy ?? {},
       visibility: input.visibility ?? 'private',
@@ -860,7 +898,7 @@ export class StorySourceService {
         ON CONFLICT(story_id) DO UPDATE SET story_key=excluded.story_key, source_path=excluded.source_path,
           source_kind=excluded.source_kind, source_digest=excluded.source_digest, source_version=excluded.source_version,
           loaded_at=excluded.loaded_at, updated_at=excluded.updated_at, last_error=NULL
-      `).run(story.id, source.story_key, resolve(bindingPath), bindingKind, sha256Hex(stableStringify(source)), STORY_SOURCE_VERSION, timestamp, timestamp)
+      `).run(story.id, source.story_key, resolve(bindingPath), bindingKind, sha256Hex(stableStringify(source)), Number(source.format_version), timestamp, timestamp)
     })
     this.db.audit('story_source.compiled', 'story', story.id, { story_key: source.story_key, source_kind: bindingKind })
     return { story: this.repository.getStory(story.id), characters: savedCharacters, source }
@@ -876,7 +914,7 @@ export class StorySourceService {
         ON CONFLICT(story_id) DO UPDATE SET story_key=excluded.story_key, source_path=excluded.source_path,
           source_kind=excluded.source_kind, source_digest=excluded.source_digest, source_version=excluded.source_version,
           loaded_at=excluded.loaded_at, updated_at=excluded.updated_at, last_error=NULL
-      `).run(story.id, source.story_key, resolve(manifestPath), kind, sha256Hex(stableStringify(source)), STORY_SOURCE_VERSION, timestamp, timestamp)
+      `).run(story.id, source.story_key, resolve(manifestPath), kind, sha256Hex(stableStringify(source)), Number(source.format_version), timestamp, timestamp)
       this.db.raw.prepare('DELETE FROM story_source_characters WHERE story_id = ?').run(story.id)
       for (const resource of source.characters) {
         const characterId = bySlug.get(resource.key)
@@ -921,6 +959,18 @@ export class StorySourceService {
       }
       return item
     })
+    for (const collection of ['actions', 'agendas']) {
+      const currentResources = new Map((current.manifest[collection] ?? []).map(item => [item.key, item]))
+      manifest[collection] = (next[collection] ?? []).map(item => {
+        const prior = currentResources.get(item.key)
+        if (prior?.source) {
+          const path = safeResourcePath(dirname(current.manifestPath), prior.source)
+          writes.push([path, prettyJson(item)])
+          return { key: item.key, source: prior.source }
+        }
+        return item
+      })
+    }
     writes.push([current.manifestPath, prettyJson(manifest)])
     atomicWriteFiles(writes)
   }

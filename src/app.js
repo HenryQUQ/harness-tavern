@@ -14,6 +14,7 @@ import { ShareLinkService } from './sharing/links.js'
 import { StorySourceService } from './story/source.js'
 import { ContextBuilder } from './runtime/context-builder.js'
 import { TurnRuntime } from './runtime/turn-runtime.js'
+import { SillyTavernMigrationService } from './migrations/sillytavern.js'
 import { createHttpServer } from './server/http.js'
 
 export function createApp({ env = process.env, loggerSink = console } = {}) {
@@ -30,9 +31,10 @@ export function createApp({ env = process.env, loggerSink = console } = {}) {
   const generationPresets = new GenerationPresetRegistry({ db })
   const sharing = new SharingService({ repository, extensions, storySources, config })
   const shareLinks = new ShareLinkService({ db, repository, packs: sharing, config })
+  const migrations = new SillyTavernMigrationService({ db, repository, sharing, generationPresets, storySources })
   const contextBuilder = new ContextBuilder({ repository })
   const turns = new TurnRuntime({ db, repository, providers, contextBuilder, logger })
-  const app = { config, logger, db, vault, repository, providers, accounts, extensions, creator, generationPresets, sharing, storySources, shareLinks, contextBuilder, turns }
+  const app = { config, logger, db, vault, repository, providers, accounts, extensions, creator, generationPresets, sharing, storySources, shareLinks, migrations, contextBuilder, turns }
   seedDemo({ db, repository, includeConversation: config.seedSampleConversation })
   app.storySourceStatus = storySources.bootstrap()
   const server = createHttpServer(app)
