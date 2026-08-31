@@ -27,14 +27,18 @@ export async function api(path, options = {}) {
   return body
 }
 
-export async function streamTurn(conversationId, content, { onEvent } = {}) {
+export async function streamTurn(conversationId, content, { onEvent, attachmentIds = [] } = {}) {
   const headers = new Headers({ 'content-type': 'application/json' })
   const token = getAccessToken()
   if (token) headers.set('x-harness-tavern-token', token)
   const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/turn/stream`, {
-    method: 'POST', headers, body: JSON.stringify({ content, idempotency_key: crypto.randomUUID() }),
+    method: 'POST', headers, body: JSON.stringify({ content, attachment_ids: attachmentIds, idempotency_key: crypto.randomUUID() }),
   })
-  if (!response.ok) throw new Error(`Could not send message (${response.status})`)
+  if (!response.ok) {
+    let body = null
+    try { body = await response.json() } catch {}
+    throw Object.assign(new Error(body?.error?.message || `Could not send message (${response.status})`), { status: response.status, code: body?.error?.code })
+  }
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''

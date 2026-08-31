@@ -87,19 +87,52 @@
       "character": "mira-vale",
       "role": "Archivist and investigator",
       "public_context": "Mira discovered that the lens was missing.",
-      "private_context": "Only Mira knows the ledger margins encode a star map."
+      "private_context": "Only Mira knows the ledger margins encode a star map.",
+      "metadata": {
+        "actor_runtime": {
+          "initiative": "proactive",
+          "initial_presence": "present",
+          "drives": ["Protect the archive", "Understand why history is changing"],
+          "fears": ["The archive erasing a person"],
+          "values": ["Evidence before certainty"],
+          "mannerisms": ["Touches the scar when the observatory shifts"],
+          "reveal_policy": "Reveal the star-map secret only when evidence or immediate danger makes concealment more harmful."
+        }
+      }
     },
     {
       "character": "rowan-ash",
       "role": "Courier and guarded witness",
       "public_context": "Rowan delivered a sealed case earlier tonight.",
-      "private_context": "Rowan carries one half of the missing lens."
+      "private_context": "Rowan carries one half of the missing lens.",
+      "metadata": {
+        "actor_runtime": {
+          "initiative": "reactive",
+          "initial_presence": "present",
+          "drives": ["Survive the night", "Keep possession of the lens fragment"],
+          "fears": ["Being searched or cornered"],
+          "values": ["Loyalty earned slowly"],
+          "mannerisms": ["Keeps one hand near the red scarf"],
+          "reveal_policy": "Do not disclose the lens fragment casually; confession requires trust, necessity, or direct exposure."
+        }
+      }
     },
     {
       "character": "lyra-voss",
       "role": "Warden and keeper of the rules",
       "public_context": "Lyra normally controls every mechanism, but the observatory rejected her keys.",
-      "private_context": "Lyra knows that the alignment can open an erased gate."
+      "private_context": "Lyra knows that the alignment can open an erased gate.",
+      "metadata": {
+        "actor_runtime": {
+          "initiative": "balanced",
+          "initial_presence": "present",
+          "drives": ["Prevent an uncontrolled alignment", "Keep the observatory contained"],
+          "fears": ["The erased gate opening"],
+          "values": ["Duty and controlled procedure"],
+          "mannerisms": ["Counts mechanisms under her breath"],
+          "reveal_policy": "Share warnings before theories; reveal the erased gate only when its risk becomes immediately relevant."
+        }
+      }
     }
   ],
   "lorebooks": [

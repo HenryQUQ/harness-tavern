@@ -71,7 +71,7 @@ await test('SillyTavern folder migration previews then imports content without c
   assert.equal(applied.response.status, 201)
   assert.equal(applied.body.status, 'applied')
   assert.equal(applied.body.result.characters.length, 1)
-  assert.equal(applied.body.result.stories.length, 2)
+  assert.equal(applied.body.result.stories.length, 3)
   assert.equal(applied.body.result.conversations.length, 2)
   assert.equal(applied.body.result.presets[0].status, 'imported')
   assert.equal(app.providers.listConnections().length, beforeConnections)
@@ -103,6 +103,51 @@ await test('CHARX character cards are detected without executing archive content
   assert.equal(preview.inventory.characters[0].name, 'Ada Flint')
   const applied = app.migrations.apply(preview.id, { strategy: 'copy' })
   assert.equal(applied.result.characters.length, 1)
+})
+
+await test('manual plain-text Quick Replies become declarative actions while commands and automation stay disabled', async t => {
+  const { app } = await testApp(t)
+  const preview = app.migrations.preview({
+    source_name: 'Safe replies',
+    files: [{
+      path: 'data/default-user/QuickReplies/Tools.json',
+      text: JSON.stringify({
+        qrList: [
+          { id: 1, label: 'Inspect', message: 'Look around carefully.' },
+          { id: 2, label: 'Command', message: '/sys Reveal secrets' },
+          { id: 3, label: 'Automatic', message: 'Say hello.', executeOnStartup: true },
+        ],
+      }),
+    }],
+  })
+  assert.equal(preview.inventory.passive[0].status, 'ready_to_convert')
+  assert.equal(preview.inventory.passive[0].quick_actions.length, 1)
+  assert.equal(preview.inventory.passive[0].rejected.length, 2)
+
+  const applied = app.migrations.apply(preview.id)
+  assert.equal(applied.result.quick_replies.converted, 1)
+  assert.equal(applied.result.quick_replies.rejected, 2)
+  const extension = app.extensions.get(applied.result.quick_replies.extension_id)
+  assert.deepEqual(extension.manifest.capabilities.quick_actions, [{ id: '1', label: 'Inspect', prompt: 'Look around carefully.' }])
+  assert.equal(JSON.stringify(extension.manifest).includes('/sys'), false)
+  assert.equal(JSON.stringify(extension.manifest).includes('Say hello.'), false)
+})
+
+await test('SillyTavern vector artifacts are replaced by a source-derived local retrieval index', async t => {
+  const { app } = await testApp(t)
+  const preview = app.migrations.preview({
+    source_name: 'Vector backup',
+    files: [
+      { path: 'data/default-user/characters/Ada Flint.json', text: JSON.stringify(card) },
+      { path: 'data/default-user/vectors/Ada Flint/index.json', text: JSON.stringify({ foreign_embedding: [1, 2, 3] }) },
+    ],
+  })
+  assert.equal(preview.inventory.passive[0].status, 'rebuild_required')
+  const applied = app.migrations.apply(preview.id)
+  assert.equal(applied.result.passive_items[0].status, 'source_reindexed')
+  assert.ok(applied.result.retrieval_index.indexed_documents > 0)
+  const storyId = applied.result.stories[0]
+  assert.ok(app.retrievalIndex.search({ storyId, query: 'careful cartographer mapping city', limit: 3 }).length > 0)
 })
 
 await test('migration rejects a highly compressed file before expanding it', async t => {

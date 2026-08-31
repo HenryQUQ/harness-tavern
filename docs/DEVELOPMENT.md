@@ -1,8 +1,56 @@
 # Developer guide
 
-This guide explains why Harness Tavern is built the way it is, how the repository is organized, how a turn moves through the system, and what a contribution must prove before it is merged.
+> Build a Tavern anyone can enter with one sentence—and a world engine they can still trust hundreds of turns later.
+
+Harness Tavern is deliberately simple at the bar and strict below the floorboards. Players should be able to talk naturally; contributors must be able to prove what the world remembers, who may know a secret, and which action created a consequence.
+
+This guide explains that contract, how the repository is organized, how a turn moves through the system, and what a change must prove before it is merged. If you want to get code running immediately, jump to [Local development setup](#local-development-setup). If you are still shaping an idea, start with [Open design conversations](#open-design-conversations) or the shorter [contribution guide](../CONTRIBUTING.md).
 
 Read [Architecture](ARCHITECTURE.md) alongside this guide when changing a cross-cutting runtime contract. Read [Experience architecture](EXPERIENCE_ARCHITECTURE.md) before changing product language or navigation.
+
+## The product promise in engineering terms
+
+The README speaks about memory, secrets, and consequences. In the codebase, those words have testable meanings.
+
+| Player promise | Engineering consequence |
+|---|---|
+| Easy as conversation | Ordinary play stays Tavern-first; causal, provider, and diagnostic complexity is progressively disclosed. |
+| The world remembers | Authoritative State comes from append-only Events and deterministic projection, not whatever prose still fits inside a prompt. |
+| Characters keep secrets | Director, each Character, Storyteller, player, creator, and public share receive purpose-built projections instead of one universal context. |
+| Choices have consequences | Registered Actions validate preconditions and commit effects before narration; prose can describe an outcome but cannot create it. |
+| The player remains the player | Generated output cannot assign unrequested speech, thoughts, feelings, consent, decisions, or successful actions to the user. |
+| Stories remain portable | Stable Story sources, provider-neutral requests, credential-free exports, and explicit migrations keep content independent of one database or model. |
+
+These are product contracts, not branding. A contribution that changes their meaning needs tests, documentation, and usually a design conversation.
+
+## Find your seat at the table
+
+You do not need to begin in the causal runtime. Choose the surface closest to the problem you care about.
+
+| You care about… | Read first | Likely code and proof |
+|---|---|---|
+| A welcoming player experience | [Experience architecture](EXPERIENCE_ARCHITECTURE.md) | `public/`, HTTP journey tests, accessibility, responsive screenshots, and plain-language copy. |
+| Story writing and creator tools | [Content authoring](CREATOR_GUIDE.md) and [Story sources](STORY_SOURCES.md) | `schemas/`, `src/story/`, `examples/`, round trips, semantic validation, and creator guidance. |
+| Memory and real consequences | [Architecture](ARCHITECTURE.md) | `src/runtime/`, `src/domain/`, `src/storage/`, Event/State assertions, retry, resume, and branch cases. |
+| Character minds and private knowledge | [Security model](SECURITY.md) | context assembly, retrieval, actor-scoped projections, reveal guards, and privacy regression tests. |
+| Models and local inference | [Provider design](#provider-design) | `src/providers/`, portable envelopes, captured local endpoints, capability and truncation tests. |
+| Migration, sharing, and portability | [Sharing and extensions](SHARING_AND_EXTENSIONS.md) | `src/migrations/`, `src/sharing/`, preview, rollback, remapping, hostile input, and sanitized output. |
+| Documentation and examples | [Documentation home](README.md) | one confusing journey, command, schema field, or design boundary made easier to understand and verify. |
+
+A small, well-evidenced improvement is useful. So is a precise account of where the current experience fails, even when you do not yet know the implementation.
+
+## Open design conversations
+
+Harness Tavern is a working beta and an open design problem. These questions are invitations to think together, not promises on a hidden roadmap:
+
+- How should long-term memory be visible and correctable without making the player administer a database?
+- How can Character-private knowledge be auditable without exposing the secret to other Characters—or spoiling it for the player?
+- How can non-programmers author meaningful Actions and consequences without reducing free-form play to a menu?
+- How should an ensemble decide who matters in a scene without creating a mandatory speaker queue?
+- Which Story, Character, Lore, and Playthrough contracts should interoperate with other tools?
+- Where should a local-first single-owner Tavern stop, and what new trust model would hosting require?
+
+Bring early questions, redacted playtest observations, protocol examples, UX sketches, or competing designs to [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions). A useful opening post describes the observed problem, who experiences it, the property that should remain true, and any privacy or compatibility boundary already known. A finished solution is not required.
 
 ## The problem the project is solving
 
@@ -60,7 +108,7 @@ Application composition and human-facing services
 └── src/app + domain services
 
 Tavern domain
-└── Characters, Personas, Stories, Playthroughs, Timelines, Cast
+└── Stories, Story-owned Cast/Actors, Personas, Playthroughs, Timelines
 
 Causal runtime
 └── Context Builder, Control Loop, Action Registry, Observations, Agendas
@@ -81,7 +129,7 @@ Dependencies point inward toward product contracts. HTTP handlers should not bec
 | `src/main.js` | CLI entrypoint for serve, seed, and doctor commands. |
 | `src/app.js` | Composition root that wires storage, providers, domain services, runtime, sharing, and HTTP contracts. |
 | `src/domain/` | Explicit Library lifecycle, normalization, journal projections, presets, and repository-facing Tavern operations. |
-| `src/runtime/` | Context assembly, control-plan contracts, Action resolution, reasoning policy, and durable turn execution. |
+| `src/runtime/` | Story Lore/macros/transforms/automations, context assembly, control-plan contracts, Action resolution, reasoning policy, and durable turn execution. |
 | `src/providers/` | Provider catalog and protocol adapters behind one portable completion seam. |
 | `src/storage/` | SQLite schema/migrations and encrypted credential vault. |
 | `src/story/` | Editable Story resource loading, validation, binding, compilation, and synchronization. |
@@ -108,6 +156,8 @@ The runtime claims the Conversation lock and persists the player Command with id
 
 The runtime reads the Story definition, Persona, Cast, and selected Timeline. Event reduction reconstructs current messages, world state, relationships, goals, commitments, Agendas, clocks, and continuity summary. A branch reads parent events only through its event boundary.
 
+Before context assembly, the Story Runtime applies scoped `user_input` transforms. It then activates Lore, expands supported macros, adds actor prompt layers and declarative automations, and applies `model_input` transforms. After narration it applies `model_output`; player projections may apply `display` transforms. None of these declarations can write causal state.
+
 ### 3. Build Director context
 
 The Context Builder assembles typed blocks instead of concatenating one uncontrolled prompt. It records which blocks were selected or omitted. Context budgets are optional; an explicit budget chooses whole blocks and never slices through text.
@@ -130,11 +180,11 @@ Only this stage commits Action effects. Rejected actions produce receipts withou
 
 ### 6. Evaluate Agenda lifecycle
 
-Story-authored `complete_when`, `fail_when`, `pause_when`, and `resume_when` conditions are evaluated against authoritative facts. Story Agendas replace generic Character Card goal loops for the same owner in that Story; card goals remain a fallback elsewhere.
+Story-authored `complete_when`, `fail_when`, `pause_when`, and `resume_when` conditions are evaluated against authoritative facts. Story Agendas replace generic Character Card goal loops for the same owner in that Story; card goals remain a fallback when that Actor has no contextual Agenda.
 
-### 7. Narrate from visible outcomes
+### 7. Narrate one Storyteller beat from visible outcomes
 
-Each selected speaker receives only the facts, lore, private context, and Observations visible to that actor. Narration is a rendering pass. It cannot call an Action or write State.
+The planner selects relevant Cast participants, not required speakers. The runtime builds one Storyteller context with player-visible facts, Lore, and Observations plus private writer files for only those participants. The boundary explicitly forbids treating one Character's private file as another Character's knowledge or exposing it without a verified/public reveal. Narration is one rendering pass, persists one narrator message, and cannot call an Action or write State; any number of Characters may speak, react, or remain silent inside that prose.
 
 Complete prose that contradicts a committed open/closed transition is recorded as discarded usage and retried once. If the retry still conflicts, the runtime renders a safe fallback from verified Observations. Provider-truncated or malformed output suspends the loop instead of creating a partial message.
 
@@ -149,7 +199,7 @@ For exact event and API contracts, see [Architecture](ARCHITECTURE.md) and [API]
 `harness-tavern-story/v2` is the canonical authoring boundary. It supports:
 
 - one self-contained `*.story.tavern.json` file;
-- or `story.tavern.json` plus relative Character, Lorebook, Markdown Scene, Action, and Agenda resources.
+- or `story.tavern.json` plus relative Story-owned Actor Character Cards, Lorebooks, Markdown Scenes, Actions, and Agendas.
 
 SQLite is the validated runtime projection, not a replacement for editable authored content. Conversations, events, Playthrough state, provider settings, and credentials never write themselves back into Story sources.
 
@@ -184,7 +234,7 @@ The browser client under `public/` intentionally uses no build framework. This k
 - `public/share.js` renders the independent public-share surface;
 - `public/styles.css` defines the responsive visual system.
 
-Player prose remains visually primary. Advanced causal information belongs in the inspector and collapses to a drawer on small screens. New navigation labels should use Character, Story, Persona, Playthrough, Timeline, Journal, and Share rather than exposing internal provider or agent vocabulary.
+Player prose remains visually primary. Advanced causal information belongs in the inspector and collapses to a drawer on small screens. New navigation labels should use Story, Cast, Persona, Playthrough, Timeline, Journal, and Share rather than exposing the internal Actor/Character table, provider, or agent vocabulary.
 
 ## Local development setup
 
@@ -246,11 +296,11 @@ Harness Tavern reads environment variables directly and does not load `.env` fil
 
 The short repository entrypoint is [CONTRIBUTING.md](../CONTRIBUTING.md). The complete workflow is below.
 
-### 1. Start with a bounded outcome
+### 1. Start with an observation or bounded outcome
 
-Use [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions) for open-ended product or architecture exploration. Use [GitHub Issues](https://github.com/HenryQUQ/harness-tavern/issues) for a reproducible defect or a feature with a clear acceptance boundary.
+Use [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions) when the problem is still open: a playtest felt wrong, a privacy boundary is unclear, two designs have credible trade-offs, or you want collaborators before choosing an implementation. Use [GitHub Issues](https://github.com/HenryQUQ/harness-tavern/issues) for a reproducible defect or a feature whose acceptance boundary is already clear.
 
-Before coding, identify:
+Before coding, try to identify:
 
 - the user-visible outcome;
 - the authoritative data or contract that changes;
@@ -258,7 +308,7 @@ Before coding, identify:
 - compatibility and migration impact;
 - the proof needed to call the work complete.
 
-Large cross-cutting changes should be discussed before implementation. Security reports must follow [SECURITY.md](../SECURITY.md), not a public issue.
+It is fine for a Discussion to discover these answers instead of arriving with all of them. Large cross-cutting changes should be discussed before implementation. Security reports must follow [SECURITY.md](../SECURITY.md), not a public issue.
 
 ### 2. Create a focused branch
 

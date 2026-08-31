@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { id, json, nowIso, slugify, stableStringify } from '../util.js'
+import { characterCardTransforms } from '../runtime/story-runtime.js'
 
 const MIGRATIONS = [
   {
@@ -328,6 +329,89 @@ const MIGRATIONS = [
       CREATE INDEX migration_sessions_updated ON migration_sessions(updated_at DESC);
     `,
   },
+  {
+    version: 9,
+    sql: `SELECT 1;`,
+  },
+  {
+    version: 10,
+    sql: `
+      UPDATE conversations
+      SET connection_id = (
+            SELECT id FROM provider_connections
+            WHERE enabled = 1 AND provider_id <> 'mock'
+            ORDER BY created_at LIMIT 1
+          ),
+          account_connection_id = NULL,
+          model_id = COALESCE(NULLIF((
+            SELECT default_model FROM provider_connections
+            WHERE enabled = 1 AND provider_id <> 'mock'
+            ORDER BY created_at LIMIT 1
+          ), ''), model_id),
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE (connection_id IN (SELECT id FROM provider_connections WHERE provider_id = 'mock') OR model_id LIKE 'mock/%')
+        AND EXISTS (SELECT 1 FROM provider_connections WHERE enabled = 1 AND provider_id <> 'mock');
+
+      UPDATE conversations
+      SET connection_id = NULL,
+          account_connection_id = NULL,
+          model_id = '',
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE connection_id IN (SELECT id FROM provider_connections WHERE provider_id = 'mock')
+         OR model_id LIKE 'mock/%';
+
+      DELETE FROM model_catalog_cache
+      WHERE connection_id IN (SELECT id FROM provider_connections WHERE provider_id = 'mock');
+      DELETE FROM provider_connections WHERE provider_id = 'mock';
+    `,
+  },
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE retrieval_documents (
+        id TEXT PRIMARY KEY,
+        story_id TEXT REFERENCES stories(id) ON DELETE CASCADE,
+        conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+        branch_id TEXT,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        vector_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX retrieval_documents_story ON retrieval_documents(story_id, source_type);
+      CREATE INDEX retrieval_documents_conversation ON retrieval_documents(conversation_id, source_type);
+      CREATE INDEX retrieval_documents_source ON retrieval_documents(source_type, source_id);
+    `,
+  },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE assets (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        message_event_uid TEXT,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        storage_path TEXT NOT NULL UNIQUE,
+        extracted_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX assets_conversation ON assets(conversation_id, created_at);
+      CREATE INDEX assets_message ON assets(message_event_uid);
+    `,
+  },
+  {
+    version: 13,
+    sql: `
+      DELETE FROM usage_ledger
+      WHERE provider_id = 'mock' OR model_id LIKE 'mock/%';
+    `,
+  },
 ]
 
 export class Database {
@@ -356,6 +440,7 @@ export class Database {
     this.#migrateLegacyModes()
     this.#backfillSlugs()
     this.#backfillConversationCast()
+    this.#backfillStoryExperiences()
   }
 
   #migrateLegacyModes() {
@@ -400,6 +485,95 @@ export class Database {
         FROM story_cast WHERE story_id = ? ORDER BY sort_order
       `).run(conversation.id, conversation.story_id)
     }
+  }
+
+  #backfillStoryExperiences() {
+    const insertStory = ({ title, characters = [], createdAt = nowIso(), metadata = {} }) => {
+      const storyId = id('story')
+      const primary = characters[0] ?? null
+      const timestamp = createdAt || nowIso()
+      const runtime = {
+        actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], automations: [],
+        transforms: characters.flatMap(character => characterCardTransforms({ extensions: json(character.extensions_json, {}) }, character.id)),
+      }
+      const lore = characters.flatMap(character => json(character.extensions_json, {}).imported_lore ?? [])
+      this.raw.prepare(`
+        INSERT INTO stories(
+          id, title, summary, premise, genre, tone, opening_scene, world_rules_json, lore_json,
+          initial_state_json, author_notes, created_at, updated_at, slug, hook, cover_url, player_role,
+          content_warnings_json, tags_json, scenes_json, metadata_json, share_policy_json, revision, visibility,
+          runtime_json
+        ) VALUES (?, ?, ?, ?, ?, ?, '', '[]', ?, '{}', '', ?, ?, ?, ?, '', '', '[]', ?, '[]', ?, '{}', 1, 'private', ?)
+      `).run(
+        storyId,
+        title,
+        primary?.description ?? '',
+        primary?.scenario ?? '',
+        characters.length > 1 ? 'Ensemble Story' : 'Single-cast Story',
+        '',
+        stableStringify(lore),
+        timestamp,
+        timestamp,
+        this.uniqueSlug('stories', title, storyId),
+        primary?.description || primary?.personality || '',
+        stableStringify(json(primary?.tags_json, [])),
+        stableStringify(metadata),
+        stableStringify(runtime),
+      )
+      return storyId
+    }
+
+    this.transaction(() => {
+      const storyless = this.raw.prepare('SELECT * FROM conversations WHERE story_id IS NULL ORDER BY created_at').all()
+      for (const conversation of storyless) {
+        const characters = this.raw.prepare(`
+          SELECT c.* FROM conversation_cast cc JOIN characters c ON c.id = cc.character_id
+          WHERE cc.conversation_id = ? ORDER BY cc.sort_order
+        `).all(conversation.id)
+        const storyId = insertStory({
+          title: conversation.title || characters[0]?.name || 'Recovered Story',
+          characters,
+          createdAt: conversation.created_at,
+          metadata: { experience_kind: 'recovered-conversation' },
+        })
+        this.raw.prepare(`
+          INSERT INTO story_cast(story_id, character_id, role, public_context, private_context, sort_order, metadata_json)
+          SELECT ?, character_id, role, public_context, private_context, sort_order, metadata_json
+          FROM conversation_cast WHERE conversation_id = ? ORDER BY sort_order
+        `).run(storyId, conversation.id)
+        this.raw.prepare('UPDATE conversations SET story_id = ? WHERE id = ?').run(storyId, conversation.id)
+      }
+
+      const conversations = this.raw.prepare('SELECT * FROM conversations WHERE story_id IS NOT NULL AND playthrough_id IS NULL ORDER BY created_at').all()
+      for (const conversation of conversations) {
+        const story = this.raw.prepare('SELECT * FROM stories WHERE id = ?').get(conversation.story_id)
+        if (!story) continue
+        const playthroughId = id('play')
+        this.raw.prepare(`
+          INSERT INTO playthroughs(id, story_id, persona_id, title, player_role, status, current_conversation_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        `).run(playthroughId, story.id, conversation.persona_id, conversation.title || story.title, story.player_role || '', conversation.id, conversation.created_at, conversation.updated_at)
+        this.raw.prepare('UPDATE conversations SET playthrough_id = ? WHERE id = ?').run(playthroughId, conversation.id)
+      }
+
+      const orphanCharacters = this.raw.prepare(`
+        SELECT c.* FROM characters c
+        WHERE NOT EXISTS (SELECT 1 FROM story_cast sc WHERE sc.character_id = c.id)
+        ORDER BY c.created_at
+      `).all()
+      for (const character of orphanCharacters) {
+        const storyId = insertStory({
+          title: character.name,
+          characters: [character],
+          createdAt: character.created_at,
+          metadata: { experience_kind: 'migrated-character-card' },
+        })
+        this.raw.prepare(`
+          INSERT INTO story_cast(story_id, character_id, role, public_context, private_context, sort_order, metadata_json)
+          VALUES (?, ?, 'Primary character', '', '', 0, '{}')
+        `).run(storyId, character.id)
+      }
+    })
   }
 
   transaction(fn) {

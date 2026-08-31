@@ -94,7 +94,11 @@ try {
   const complete = app.providers.complete.bind(app.providers)
   app.providers.complete = async (request, options) => {
     const result = await complete(request, options)
-    const phase = request.messages.some(message => /control planner inside Harness Tavern/i.test(message.content)) ? 'control' : 'narration'
+    const contract = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n')
+    const character = contract.match(/isolated Character runtime for\s+.+?\s+\(([^)]+)\)/i)
+    const phase = /control planner inside Harness Tavern/i.test(contract)
+      ? 'interpretation'
+      : character ? `character:${character[1]}` : 'narration:storyteller'
     providerCalls.push({
       phase,
       finish_reason: result.finishReason,
@@ -170,6 +174,12 @@ try {
     assert.ok(receipt, `${step.id} did not resolve the expected ${step.action} Action`)
     assert.equal(receipt.status, step.status, `${step.id} returned the wrong Action status`)
     assert.equal(turn.messages.length, 1, `${step.id} did not respect focused one-speaker pacing`)
+    assert.deepEqual(turn.messages[0].participant_ids, [SAMPLE_IDS.mira], `${step.id} selected a Character outside the spotlight`)
+    assert.ok(turn.messages[0].scene_blocks?.some(block => block.type === 'narration'), `${step.id} did not return structured narration`)
+    assert.ok(
+      turn.messages[0].scene_blocks.every(block => block.type !== 'dialogue' || block.character_id === SAMPLE_IDS.mira),
+      `${step.id} attributed dialogue to a Character that did not choose to speak`,
+    )
     assert.equal(turn.completed.context_manifests.control.policy, 'provider-managed-no-tavern-ceiling')
     assert.equal(turn.completed.context_manifests.control.truncated_blocks, 0)
 
@@ -226,7 +236,16 @@ try {
   assert.equal(finalProjection.world.doors.west_hall.locked, false)
   assert.equal(finalProjection.world.doors.west_hall.open, true)
   assert.equal(Object.values(finalProjection.agendas).length, 3, 'Story-specific intent should not be duplicated by generic card-goal loops')
-  assert.ok(Object.values(finalProjection.agendas).every(agenda => agenda.status === 'active' && agenda.evaluation_count >= 4), 'Persistent Agendas were not kept active and evaluated on every command')
+  assert.ok(Object.values(finalProjection.agendas).every(agenda => agenda.status === 'active'), 'A model assertion incorrectly closed a persistent Agenda')
+  assert.ok(finalProjection.agendas['mira-protect-archive'].evaluation_count >= 4, 'The selected Character did not evaluate her persistent Agenda on every command')
+  assert.equal(finalProjection.agendas['rowan-survive'].evaluation_count, 0, 'An unselected Character evaluated private intent outside its isolated runtime')
+  assert.equal(finalProjection.agendas['lyra-stop-gate'].evaluation_count, 0, 'An unselected Character evaluated intent outside its isolated runtime')
+  assert.equal(finalProjection.characterStates[SAMPLE_IDS.mira].initiative, 'proactive')
+  assert.ok(finalProjection.characterStates[SAMPLE_IDS.mira].perceived_event_ids.length > 0, 'Character perceptions were not persisted')
+  assert.equal(finalProjection.characterStates[SAMPLE_IDS.rowan], undefined, 'An unselected Character received an inner-state event')
+  assert.equal(finalProjection.characterStates[SAMPLE_IDS.lyra], undefined, 'An unselected Character received an inner-state event')
+  assert.ok(providerCalls.some(call => call.phase === `character:${SAMPLE_IDS.mira}`), 'DeepSeek was not invoked as the isolated Character runtime')
+  assert.ok(providerCalls.some(call => call.phase === 'narration:storyteller'), 'DeepSeek was not invoked as the Storyteller')
   assert.doesNotMatch(report.steps.map(step => step.narration_excerpt).join('\n'), /inside (?:his|the) (?:red )?scarf|carries (?:one half|a fragment)|PRIVATE_/i, 'Narration leaked Rowan’s private lens state')
 
   const eventCount = app.repository.events(conversation.id).length

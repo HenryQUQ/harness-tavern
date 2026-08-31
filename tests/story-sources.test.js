@@ -325,3 +325,50 @@ await test('migration 7 upgrades a database-only Story without losing runtime co
   assert.ok(app.db.raw.prepare('SELECT 1 FROM schema_migrations WHERE version = 7').get())
   assert.ok(app.storySources.binding(SAMPLE_IDS.story))
 })
+
+await test('migration 9 wraps legacy chats and orphan Character Cards in idempotent Stories', async t => {
+  const { app } = await testApp(t)
+  const chatActor = app.repository.createCharacter({
+    name: 'Legacy Chat Actor',
+    first_message: 'This chat predates Story playthroughs.',
+  })
+  const conversation = app.repository.createConversation({
+    title: 'Recovered legacy chat',
+    character_ids: [chatActor.id],
+    persona_id: SAMPLE_IDS.persona,
+  })
+  const orphan = app.repository.createCharacter({
+    name: 'Orphan Card',
+    extensions: {
+      regex_scripts: [{ scriptName: 'Dusk vocabulary', findRegex: '/night/gi', replaceString: 'dusk', placement: [2] }],
+      imported_lore: [{ id: 'orphan-signal', keys: ['signal'], content: 'The signal belongs to the old railway.' }],
+    },
+  })
+  assert.equal(app.db.raw.prepare('SELECT story_id FROM conversations WHERE id = ?').get(conversation.id).story_id, null)
+  assert.equal(app.db.raw.prepare('SELECT 1 FROM story_cast WHERE character_id = ?').get(orphan.id), undefined)
+
+  app.db.raw.prepare('DELETE FROM schema_migrations WHERE version = 9').run()
+  app.db.migrate()
+
+  const recoveredConversation = app.repository.getConversation(conversation.id)
+  assert.ok(recoveredConversation.story_id)
+  assert.ok(recoveredConversation.playthrough_id)
+  const recoveredStory = app.repository.getStory(recoveredConversation.story_id)
+  assert.deepEqual(recoveredStory.cast.map(member => member.character_id), [chatActor.id])
+  assert.equal(recoveredStory.metadata.experience_kind, 'recovered-conversation')
+
+  const orphanStoryId = app.db.raw.prepare('SELECT story_id FROM story_cast WHERE character_id = ?').get(orphan.id).story_id
+  const orphanStory = app.repository.getStory(orphanStoryId)
+  assert.equal(orphanStory.metadata.experience_kind, 'migrated-character-card')
+  assert.equal(orphanStory.runtime.transforms[0].name, 'Dusk vocabulary')
+  assert.equal(orphanStory.lore[0].id, 'orphan-signal')
+  assert.ok(app.db.raw.prepare('SELECT 1 FROM schema_migrations WHERE version = 9').get())
+
+  const counts = {
+    stories: app.db.raw.prepare('SELECT COUNT(*) AS count FROM stories').get().count,
+    playthroughs: app.db.raw.prepare('SELECT COUNT(*) AS count FROM playthroughs').get().count,
+  }
+  app.db.migrate()
+  assert.equal(app.db.raw.prepare('SELECT COUNT(*) AS count FROM stories').get().count, counts.stories)
+  assert.equal(app.db.raw.prepare('SELECT COUNT(*) AS count FROM playthroughs').get().count, counts.playthroughs)
+})

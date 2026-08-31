@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { createApp } from '../src/app.js'
 import { SAMPLE_IDS } from '../src/domain/seed.js'
 import { EXTENSION_FORMAT, EXTENSION_VERSION, PRODUCT_VERSION } from '../src/version.js'
+import { installDeterministicTestProvider } from '../test-support/deterministic-provider.js'
 
 function quietSink() { return { log() {}, info() {}, warn() {}, error() {}, debug() {} } }
 
@@ -15,6 +16,7 @@ async function start(label) {
     env: { ...process.env, HT_DATA_DIR: dataDir, HT_HOST: '127.0.0.1', HT_PORT: '0', HT_LOG_LEVEL: 'error' },
     loggerSink: quietSink(),
   })
+  installDeterministicTestProvider(app)
   const address = await app.listen()
   return { app, dataDir, baseUrl: `http://127.0.0.1:${address.port}` }
 }
@@ -41,7 +43,7 @@ try {
   const bootstrap = await request(first.baseUrl, '/api/bootstrap')
   assert.equal(bootstrap.user_profile.onboarding_complete, false)
   assert.ok(bootstrap.home.stories.some(item => item.id === SAMPLE_IDS.story))
-  pass('fresh-start', 'Demo content and a zero-configuration model are available.')
+  pass('fresh-start', 'Sample Story content is available without manufacturing a Conversation; the journey installed an isolated test provider explicitly.')
 
   const profile = await request(first.baseUrl, '/api/user-profile', {
     method: 'PATCH',
@@ -58,33 +60,61 @@ try {
   assert.equal(first.app.repository.getPersona(SAMPLE_IDS.persona).name, 'Avery')
   pass('onboarding', 'A nontechnical user can set identity without touching model settings.')
 
-  const characterResult = await request(first.baseUrl, '/api/library/items', {
+  const soloStoryResult = await request(first.baseUrl, '/api/library/items', {
     method: 'POST',
     body: {
-      kind: 'character',
+      kind: 'story',
       content: {
-        name: 'Iona Reed',
-        description: 'A night-train conductor who remembers every passenger.',
-        personality: 'Warm, independent, quietly funny and observant.',
-        first_message: 'The last train is waiting.',
-        goals: ['Keep every passenger safe'],
-        boundaries: ['Never decides the player’s actions'],
+        title: 'The Last Night Train',
+        cast: [{
+          client_id: 'iona',
+          role: 'Conductor',
+          character: {
+            name: 'Iona Reed',
+            description: 'A night-train conductor who remembers every passenger.',
+            personality: 'Warm, independent, quietly funny and observant.',
+            first_message: 'The last train is waiting.',
+            goals: ['Keep every passenger safe'],
+            boundaries: ['Never decides the player’s actions'],
+          },
+        }],
+        runtime: {
+          transforms: [{ id: 'platform', name: 'Platform detail', pattern: 'platform', flags: 'gi', replacement: 'moonlit platform', stages: ['display'], actor: 'story', enabled: true }],
+          automations: [{ id: 'train-motion', key: 'train-motion', name: 'Keep the train moving', trigger: 'narration', prompt: 'Keep the physical motion and sound of the train present.', enabled: true }],
+        },
       },
     },
   })
-  const character = characterResult.item
+  const soloStory = soloStoryResult.item
+  const character = soloStory.cast[0].character
+  assert.equal(soloStory.title, 'The Last Night Train')
   assert.equal(character.name, 'Iona Reed')
-  assert.equal(character.scenario, '')
-  const characterConversation = await request(first.baseUrl, '/api/conversations', {
+  assert.equal(soloStory.runtime.transforms.length, 1)
+  const soloStarted = await request(first.baseUrl, '/api/playthroughs', {
     method: 'POST',
-    body: { title: 'Night train with Iona', persona_id: SAMPLE_IDS.persona, character_ids: [character.id], thinking_intensity: 'auto' },
+    body: { story_id: soloStory.id, persona_id: SAMPLE_IDS.persona },
   })
-  const characterTurn = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(characterConversation.id)}/turn`, {
+  const characterTurn = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(soloStarted.conversation.id)}/turn`, {
     method: 'POST',
     body: { content: 'The platform is empty. What did you notice before I arrived?' },
   })
-  assert.ok(characterTurn.messages.some(message => message.character_id === character.id))
-  pass('explicit-character-to-chat', 'Explicit Character fields entered the Library unchanged and started a working conversation.')
+  assert.equal(characterTurn.messages.length, 1)
+  assert.equal(characterTurn.messages[0].character_id, 'narrator')
+  assert.deepEqual(characterTurn.messages[0].participant_ids, [character.id])
+  pass('single-cast-story-to-playthrough', 'A one-member Cast and Story Runtime entered the Library and produced one coherent Storyteller beat.')
+
+  const attachment = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(soloStarted.conversation.id)}/assets`, {
+    method: 'POST',
+    body: { filename: 'signal.txt', mime_type: 'text/plain', data_base64: Buffer.from('The signal repeats at 01:17.').toString('base64') },
+  })
+  const attachmentTurn = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(soloStarted.conversation.id)}/turn`, {
+    method: 'POST',
+    body: { content: 'I hand the recording log to the Storyteller.', attachment_ids: [attachment.id] },
+  })
+  assert.equal(attachmentTurn.messages.length, 1)
+  const attachmentView = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(soloStarted.conversation.id)}`)
+  assert.ok(attachmentView.messages.some(message => message.metadata?.attachments?.some(item => item.id === attachment.id)))
+  pass('attachment-to-storyteller', 'A bounded text attachment entered one Storyteller turn and became immutable Conversation history.')
 
   const storyResult = await request(first.baseUrl, '/api/library/items', {
     method: 'POST',
@@ -117,6 +147,9 @@ try {
     body: { content: 'Each of you compare what you know, then decide together what changed in the orchard last night.' },
   })
   assert.equal(storyTurn.effective_thinking_intensity, 'high')
+  assert.equal(storyTurn.messages.length, 1)
+  assert.equal(storyTurn.messages[0].character_id, 'narrator')
+  assert.equal(storyTurn.messages[0].participant_ids.length, 3)
   const journal = await request(first.baseUrl, `/api/conversations/${encodeURIComponent(playConversation.id)}`)
   assert.ok(journal.journal)
   assert.doesNotMatch(JSON.stringify(journal.journal), /private_context|director_context|creator_notes/i)
@@ -161,10 +194,11 @@ try {
   const libraryPack = await libraryResponse.json()
   const importPreview = await request(second.baseUrl, '/api/import/preview', { method: 'POST', body: { content: libraryPack } })
   assert.ok(importPreview.counts.stories >= 2)
+  assert.ok(importPreview.counts.actors >= 4)
   const imported = await request(second.baseUrl, '/api/import/apply', { method: 'POST', body: { content: libraryPack, strategy: 'copy', source_name: 'cold-journey-library' } })
   assert.ok(imported.result.stories.length >= 2)
-  assert.ok(imported.result.characters.length >= 4)
-  pass('portable-library', 'A complete library exported from one fresh instance and imported into another.')
+  assert.ok(second.app.repository.listStories().some(item => item.cast.length >= 3))
+  pass('portable-library', 'Complete Stories, including their Cast and Runtime dependencies, moved between fresh instances.')
 
   const share = await request(first.baseUrl, '/api/shares', {
     method: 'POST',

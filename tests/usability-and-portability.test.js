@@ -63,7 +63,7 @@ await test('the core refuses to turn a finished Story into an opinionated creati
 
 await test('a complete Tavern library exports and imports through the same preview flow', async t => {
   const source = await testApp(t)
-  source.app.library.add({ kind: 'character', content: { name: 'Ferry captain', description: 'Remembers every passenger.' } })
+  source.app.library.add({ kind: 'story', content: { title: 'The last ferry', cast: [{ character: { name: 'Ferry captain', description: 'Remembers every passenger.' } }] } })
   const exported = await jsonRequest(source.baseUrl, '/api/exports/library')
   assert.equal(exported.response.status, 200)
   assert.equal(exported.body.kind, 'collection')

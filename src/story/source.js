@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import Ajv2020 from 'ajv/dist/2020.js'
 import { assert, cleanText, nowIso, plainObject, sha256Hex, slugify, stableStringify, uniqueStrings } from '../util.js'
 import { cardToCharacter, characterToCardV2 } from '../sharing/pack.js'
+import { loreCompatibilityFields } from '../domain/lore.js'
 
 export const STORY_SOURCE_FORMAT = 'harness-tavern-story'
 export const STORY_SOURCE_VERSION = 2
@@ -77,6 +78,8 @@ function validateSemantics(source) {
   assertUniqueKeys(source.scenes ?? [], 'Scene')
   assertUniqueKeys(source.actions ?? [], 'Action')
   assertUniqueKeys(source.agendas ?? [], 'Agenda')
+  assertUniqueKeys(source.transforms ?? [], 'Transform')
+  assertUniqueKeys(source.automations ?? [], 'Automation')
   const characterKeys = new Set(source.characters.map(item => item.key))
   const castKeys = new Set()
   for (const member of source.cast) {
@@ -181,10 +184,12 @@ function normalizeLorebook(value, fallbackKey, visibility) {
       title: cleanText(entry.title ?? entry.comment ?? entry.name ?? key, 300) || key,
       content: cleanText(entry.content, 10_000),
       keywords: uniqueStrings(entry.keywords ?? entry.keys ?? entry.key, 50, 100),
+      secondary_keywords: uniqueStrings(entry.secondary_keywords ?? entry.secondary_keys ?? entry.keysecondary, 50, 100),
+      selective: Boolean(entry.selective),
       visibility: ['public', 'private', 'director'].includes(visibility ?? entry.visibility) ? (visibility ?? entry.visibility) : 'public',
       enabled: entry.enabled !== false && entry.disable !== true,
       constant: Boolean(entry.constant),
-      ...Number.isInteger(entry.position) ? { position: entry.position } : {},
+      ...loreCompatibilityFields(entry),
       ...plainObject(entry.extensions) ? { extensions: entry.extensions } : {},
     }
   })
@@ -318,9 +323,12 @@ export function storyToSource(story, { characterKeyById = new Map() } = {}) {
       title: cleanText(entry.title ?? entry.name ?? `Lore ${index + 1}`, 300) || `Lore ${index + 1}`,
       content: cleanText(entry.content, 10_000),
       keywords: uniqueStrings(entry.keywords ?? entry.keys, 50, 100),
+      secondary_keywords: uniqueStrings(entry.secondary_keywords ?? entry.secondary_keys, 50, 100),
+      ...entry.selective ? { selective: true } : {},
       visibility: ['public', 'private', 'director'].includes(entry.visibility) ? entry.visibility : 'public',
       ...entry.enabled === false ? { enabled: false } : {},
       ...entry.constant ? { constant: true } : {},
+      ...loreCompatibilityFields(entry),
       ...plainObject(entry.extensions) ? { extensions: entry.extensions } : {},
     })),
   }
@@ -362,6 +370,14 @@ export function storyToSource(story, { characterKeyById = new Map() } = {}) {
     }), replacements) } : {},
     ...story.runtime?.prompt_graph && Object.keys(story.runtime.prompt_graph).length ? { prompt_graph: deepMapStrings(story.runtime.prompt_graph, replacements) } : {},
     ...story.runtime?.state_visibility?.length ? { state_visibility: deepMapStrings(story.runtime.state_visibility, replacements) } : {},
+    ...story.runtime?.transforms?.length ? { transforms: deepMapStrings(story.runtime.transforms.map((item, index) => {
+      const { id: itemId, ...portable } = item
+      return { ...portable, key: item.key ?? itemId ?? `transform-${index + 1}` }
+    }), replacements) } : {},
+    ...story.runtime?.automations?.length ? { automations: deepMapStrings(story.runtime.automations.map((item, index) => {
+      const { id: itemId, ...portable } = item
+      return { ...portable, key: item.key ?? itemId ?? `automation-${index + 1}` }
+    }), replacements) } : {},
   }
   return loadStorySource(source).source
 }
@@ -504,6 +520,7 @@ function comparableStory(story) {
       private_context: member.private_context,
       metadata: member.metadata,
     })),
+    runtime: story.runtime,
   })
 }
 
@@ -528,8 +545,11 @@ function runtimeStory(source, characterIds) {
       title: entry.title,
       content: entry.content,
       keywords: entry.keywords ?? [],
+      secondary_keywords: entry.secondary_keywords ?? [],
+      ...entry.selective ? { selective: true } : {},
       visibility: entry.visibility ?? resource.visibility ?? 'public',
       ...entry.constant ? { constant: true } : {},
+      ...loreCompatibilityFields(entry),
       ...entry.extensions ? { extensions: entry.extensions } : {},
     })))
   const scenes = (source.scenes ?? []).map(scene => ({
@@ -554,6 +574,8 @@ function runtimeStory(source, characterIds) {
       agendas: deepMapStrings((source.agendas ?? []).map(agenda => ({ ...agenda, id: agenda.key, owner_id: agenda.owner ?? agenda.owner_id })), replacements),
       prompt_graph: deepMapStrings(source.prompt_graph ?? {}, replacements),
       state_visibility: deepMapStrings(source.state_visibility ?? [], replacements),
+      transforms: deepMapStrings((source.transforms ?? []).map(item => ({ ...item, id: item.key })), replacements),
+      automations: deepMapStrings((source.automations ?? []).map(item => ({ ...item, id: item.key })), replacements),
     },
     cast: source.cast.map(member => ({
       character_id: characterIds.get(member.character),
@@ -679,9 +701,9 @@ export class StorySourceService {
     return { result, receipt }
   }
 
-  compilePath(path, { targetStoryId = null, strategy = 'replace' } = {}) {
+  compilePath(path, { targetStoryId = null, strategy = 'replace', preferredCharacterIds = new Map() } = {}) {
     const loaded = loadStorySourcePath(path)
-    return this.#compile(loaded, { targetStoryId, strategy, bindingPath: loaded.manifestPath, bindingKind: loaded.kind })
+    return this.#compile(loaded, { targetStoryId, strategy, bindingPath: loaded.manifestPath, bindingKind: loaded.kind, preferredCharacterIds })
   }
 
   materialize(storyId, { overwrite = false } = {}) {
@@ -747,7 +769,7 @@ export class StorySourceService {
     }
   }
 
-  save(storyId, input, { expectedDigest = null } = {}) {
+  save(storyId, input, { expectedDigest = null, preferredCharacterIds = new Map() } = {}) {
     const binding = this.binding(storyId)
     assert(binding, 'Story has no editable source binding', 404, 'story_source_not_found')
     const next = loadStorySource(input).source
@@ -756,54 +778,69 @@ export class StorySourceService {
     const currentDigest = sha256Hex(stableStringify(current.source))
     assert(!expectedDigest || expectedDigest === currentDigest, 'The Story source changed after you opened it. Reload before saving so newer file edits are not overwritten.', 409, 'story_source_conflict')
     this.#writeBack(current, next)
-    const compiled = this.compilePath(binding.source_path, { targetStoryId: storyId, strategy: 'replace' })
+    const compiled = this.compilePath(binding.source_path, { targetStoryId: storyId, strategy: 'replace', preferredCharacterIds })
     return { source: loadStorySourcePath(binding.source_path).source, binding: publicBinding(this.binding(storyId), this.root), story: compiled.story }
   }
 
   createRuntimeStory(input) {
     const title = cleanText(input.title, 200)
     assert(title, 'Story title is required')
-    assert(Array.isArray(input.cast) && input.cast.length > 0, 'A Story source requires at least one cast member')
-    const cast = input.cast.map((member, index) => ({
-      ...member,
-      sort_order: index,
-      metadata: member.metadata ?? {},
-      character: this.repository.getCharacter(member.character_id),
-    }))
-    const story = {
-      title,
-      slug: this.#uniqueStoryKey(input.slug || title),
-      hook: input.hook ?? input.summary ?? '',
-      summary: input.summary ?? '',
-      premise: input.premise ?? '',
-      genre: input.genre ?? '',
-      tone: input.tone ?? '',
-      opening_scene: input.opening_scene ?? '',
-      player_role: input.player_role ?? '',
-      world_rules: input.world_rules ?? [],
-      lore: input.lore ?? [],
-      initial_state: input.initial_state ?? {},
-      author_notes: input.author_notes ?? '',
-      content_warnings: input.content_warnings ?? [],
-      tags: input.tags ?? [],
-      scenes: input.scenes ?? [],
-      runtime: input.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} },
-      metadata: input.metadata ?? {},
-      share_policy: input.share_policy ?? {},
-      visibility: input.visibility ?? 'private',
-      cover_url: input.cover_url ?? '',
-      cast,
-    }
-    const source = storyToSource(story)
-    const manifestPath = join(this.root, source.story_key, 'story.tavern.json')
-    const preferredCharacterIds = new Map(source.characters.map((resource, index) => [resource.key, cast[index].character_id]))
-    atomicWriteFiles([[manifestPath, prettyJson(source)]])
-    return this.#compile({ source, manifest: source, kind: 'single', manifestPath }, {
-      strategy: 'replace',
-      bindingPath: manifestPath,
-      bindingKind: 'single',
-      preferredCharacterIds,
-    }).story
+    return this.db.transaction(() => {
+      const clientCharacterIds = new Map()
+      const cast = (Array.isArray(input.cast) ? input.cast : []).map((member, index) => {
+        const actorInput = plainObject(member.character) ? member.character : (!member.character_id && member.name ? member : null)
+        const character = member.character_id
+          ? this.repository.getCharacter(member.character_id)
+          : this.repository.createCharacter(actorInput ?? {})
+        if (member.client_id) clientCharacterIds.set(member.client_id, character.id)
+        return {
+          character_id: character.id,
+          role: member.role ?? '',
+          public_context: member.public_context ?? '',
+          private_context: member.private_context ?? '',
+          sort_order: index,
+          metadata: member.metadata ?? {},
+          character,
+        }
+      })
+      const story = {
+        title,
+        slug: this.#uniqueStoryKey(input.slug || title),
+        hook: input.hook ?? input.summary ?? '',
+        summary: input.summary ?? '',
+        premise: input.premise ?? '',
+        genre: input.genre ?? '',
+        tone: input.tone ?? '',
+        opening_scene: input.opening_scene ?? '',
+        player_role: input.player_role ?? '',
+        world_rules: input.world_rules ?? [],
+        lore: input.lore ?? [],
+        initial_state: input.initial_state ?? {},
+        author_notes: input.author_notes ?? '',
+        content_warnings: input.content_warnings ?? [],
+        tags: input.tags ?? [],
+        scenes: deepMapStrings(input.scenes ?? [], clientCharacterIds),
+        runtime: {
+          actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], transforms: [], automations: [],
+          ...deepMapStrings(input.runtime ?? {}, clientCharacterIds),
+        },
+        metadata: input.metadata ?? {},
+        share_policy: input.share_policy ?? {},
+        visibility: input.visibility ?? 'private',
+        cover_url: input.cover_url ?? '',
+        cast,
+      }
+      const source = storyToSource(story)
+      const manifestPath = join(this.root, source.story_key, 'story.tavern.json')
+      const preferredCharacterIds = new Map(source.characters.map((resource, index) => [resource.key, cast[index].character_id]))
+      atomicWriteFiles([[manifestPath, prettyJson(source)]])
+      return this.#compile({ source, manifest: source, kind: 'single', manifestPath }, {
+        strategy: 'replace',
+        bindingPath: manifestPath,
+        bindingKind: 'single',
+        preferredCharacterIds,
+      }).story
+    })
   }
 
   updateRuntimeStory(storyId, input, { expectedDigest = null } = {}) {
@@ -812,20 +849,46 @@ export class StorySourceService {
     const existingBinding = this.binding(storyId)
     this.compilePath(existingBinding.source_path, { targetStoryId: storyId, strategy: 'replace' })
     const currentStory = this.repository.getStory(storyId)
-    const cast = input.cast === undefined ? currentStory.cast : input.cast.map((member, index) => ({
-      ...member,
-      sort_order: index,
-      metadata: member.metadata ?? {},
-      character: this.repository.getCharacter(member.character_id),
-    }))
-    assert(cast.length > 0, 'A Story source requires at least one cast member')
-    const proposed = { ...currentStory, ...input, cast }
-    const binding = this.binding(currentStory.id)
-    if (!binding) this.materialize(currentStory.id)
-    const loaded = this.get(currentStory.id)
-    const characterKeyById = new Map(this.db.raw.prepare('SELECT character_key, character_id FROM story_source_characters WHERE story_id = ?').all(currentStory.id).map(row => [row.character_id, row.character_key]))
-    const next = mergeRuntimeIntoSource(loaded.source, proposed, characterKeyById)
-    return this.save(currentStory.id, next, { expectedDigest: expectedDigest ?? loaded.binding.digest }).story
+    return this.db.transaction(() => {
+      const clientCharacterIds = new Map()
+      const cast = input.cast === undefined ? currentStory.cast : input.cast.map((member, index) => {
+        const nested = plainObject(member.character) ? member.character : null
+        let character
+        if (member.character_id) {
+          character = this.repository.getCharacter(member.character_id)
+          if (nested) {
+            const { id: _id, slug: _slug, created_at: _createdAt, updated_at: _updatedAt, ...editable } = nested
+            character = this.repository.updateCharacter(character.id, editable)
+          }
+        } else {
+          character = this.repository.createCharacter(nested ?? member)
+        }
+        if (member.client_id) clientCharacterIds.set(member.client_id, character.id)
+        return {
+          character_id: character.id,
+          role: member.role ?? '',
+          public_context: member.public_context ?? '',
+          private_context: member.private_context ?? '',
+          sort_order: index,
+          metadata: member.metadata ?? {},
+          character,
+        }
+      })
+      const proposed = {
+        ...currentStory,
+        ...input,
+        ...input.scenes !== undefined ? { scenes: deepMapStrings(input.scenes, clientCharacterIds) } : {},
+        ...input.runtime !== undefined ? { runtime: deepMapStrings(input.runtime, clientCharacterIds) } : {},
+        cast,
+      }
+      const binding = this.binding(currentStory.id)
+      if (!binding) this.materialize(currentStory.id)
+      const loaded = this.get(currentStory.id)
+      const characterKeyById = new Map(this.db.raw.prepare('SELECT character_key, character_id FROM story_source_characters WHERE story_id = ?').all(currentStory.id).map(row => [row.character_id, row.character_key]))
+      const next = mergeRuntimeIntoSource(loaded.source, proposed, characterKeyById)
+      const preferredCharacterIds = new Map(next.cast.map((member, index) => [member.character, cast[index].character_id]))
+      return this.save(currentStory.id, next, { expectedDigest: expectedDigest ?? loaded.binding.digest, preferredCharacterIds }).story
+    })
   }
 
   updateRuntimeCharacter(characterId, input, { expectedToken = null } = {}) {

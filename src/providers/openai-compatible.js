@@ -32,6 +32,20 @@ function combinedUsage(...attempts) {
   return output
 }
 
+export function openAiMultimodalMessages(messages, attachments = []) {
+  const images = attachments.filter(item => item.delivery === 'inline' && item.mime_type?.startsWith('image/') && item.data_base64)
+  if (!images.length) return messages
+  const targetIndex = messages.findLastIndex(message => message.role === 'user')
+  if (targetIndex < 0) return messages
+  return messages.map((message, index) => index === targetIndex ? {
+    ...message,
+    content: [
+      { type: 'text', text: String(message.content ?? '') },
+      ...images.map(item => ({ type: 'image_url', image_url: { url: `data:${item.mime_type};base64,${item.data_base64}` } })),
+    ],
+  } : message)
+}
+
 export class OpenAiCompatibleAdapter {
   constructor({ timeoutMs = 120_000 } = {}) { this.timeoutMs = timeoutMs }
 
@@ -51,7 +65,7 @@ export class OpenAiCompatibleAdapter {
       ...safeBodyOverlay(customBody(connection)),
       ...presetOptions,
       model: request.model,
-      messages: request.messages,
+      messages: openAiMultimodalMessages(request.messages, request.attachments),
       ...!isDeepSeek || !deepSeekThinking ? { temperature: request.temperature, top_p: request.topP } : {},
       ...optionalParameters,
       ...plan.visibleTokens === null ? {} : { max_tokens: plan.visibleTokens },
@@ -87,8 +101,11 @@ export class OpenAiCompatibleAdapter {
     let emptyJsonAttempt = null
     let fallback = null
     // DeepSeek documents that JSON mode can occasionally return an empty
-    // content string. Retry that exact request once with a stronger JSON
-    // reminder and thinking disabled; do not introduce an output ceiling.
+    // content string. Retry once with a stronger JSON reminder and thinking
+    // disabled. For narration, also remove response_format so the rendering
+    // retry cannot remain stuck in the provider's empty-JSON mode; control and
+    // Character planning retain strict JSON mode. Runtime contracts still
+    // validate the returned object before any content is committed.
     if (isDeepSeek && request.jsonMode && !content.trim() && choice?.finish_reason !== 'length') {
       emptyJsonAttempt = result
       body = {
@@ -99,6 +116,7 @@ export class OpenAiCompatibleAdapter {
         thinking: { type: 'disabled' },
       }
       delete body.reasoning_effort
+      if (request.phase === 'narration') delete body.response_format
       result = await fetchJson(endpoint, {
         method: 'POST', headers, body: JSON.stringify(body), signal,
       }, { timeoutMs: this.timeoutMs, retries: 0 })

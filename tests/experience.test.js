@@ -3,33 +3,36 @@ import assert from 'node:assert/strict'
 import { testApp, jsonRequest } from './helpers.js'
 import { SAMPLE_IDS } from '../src/domain/seed.js'
 
-await test('explicit Character content enters the Library unchanged and can start a conversation', async t => {
+await test('explicit single-actor content enters the Library as a Story and starts a playthrough', async t => {
   const { app } = await testApp(t)
   const created = app.library.add({
-    kind: 'character',
+    kind: 'story',
     content: {
-      name: 'Elara Vale',
-      description: 'A night-shift radio host.',
-      personality: 'Patient and direct.',
-      first_message: 'The line is open.',
-      goals: ['Understand the signal'],
-      secrets: ['She has heard it before'],
-      boundaries: ['Does not decide the player’s actions'],
+      title: 'The Night Signal',
+      cast: [{ character: {
+        name: 'Elara Vale',
+        description: 'A night-shift radio host.',
+        personality: 'Patient and direct.',
+        first_message: 'The line is open.',
+        goals: ['Understand the signal'],
+        secrets: ['She has heard it before'],
+        boundaries: ['Does not decide the player’s actions'],
+      } }],
     },
   })
-  assert.equal(created.kind, 'character')
-  assert.equal(created.item.description, 'A night-shift radio host.')
-  assert.equal(created.item.scenario, '')
-  assert.deepEqual(created.item.goals, ['Understand the signal'])
-  assert.equal(created.item.metadata.creator, undefined)
+  assert.equal(created.kind, 'story')
+  assert.equal(created.item.cast[0].character.description, 'A night-shift radio host.')
+  assert.equal(created.item.cast[0].character.scenario, '')
+  assert.deepEqual(created.item.cast[0].character.goals, ['Understand the signal'])
 
-  const conversation = app.repository.createConversation({
-    title: `Chat with ${created.item.name}`,
-    character_ids: [created.item.id],
+  const { conversation } = app.repository.createPlaythrough({
+    story_id: created.item.id,
     persona_id: SAMPLE_IDS.persona,
   })
   const turn = await app.turns.run(conversation.id, { content: 'I heard something impossible on the road tonight.' })
-  assert.equal(turn.messages[0].character_id, created.item.id)
+  assert.equal(turn.messages.length, 1)
+  assert.equal(turn.messages[0].character_id, 'narrator')
+  assert.deepEqual(turn.messages[0].participant_ids, [created.item.cast[0].character_id])
 })
 
 await test('explicit Story structure becomes a canonical playable file without generated plot details', async t => {
@@ -58,7 +61,9 @@ await test('explicit Story structure becomes a canonical playable file without g
 
   const playthrough = app.repository.createPlaythrough({ story_id: created.item.id, persona_id: SAMPLE_IDS.persona })
   const turn = await app.turns.run(playthrough.conversation.id, { content: 'Each of you compare what you know, then decide together what we should observe.' })
-  assert.equal(turn.messages.length, 3)
+  assert.equal(turn.messages.length, 1)
+  assert.equal(turn.messages[0].character_id, 'narrator')
+  assert.deepEqual(turn.messages[0].participant_ids, created.item.cast.map(member => member.character_id))
 })
 
 await test('onboarding can update the default persona without asking for technical settings', async t => {
@@ -80,27 +85,21 @@ await test('the generic Library API accepts explicit content and rejects fixed-b
   const { baseUrl } = await testApp(t)
   const types = await jsonRequest(baseUrl, '/api/library/content-types')
   assert.equal(types.response.status, 200)
-  assert.deepEqual(types.body.map(item => item.kind), ['character', 'story'])
+  assert.deepEqual(types.body.map(item => item.kind), ['story'])
   assert.ok(types.body.every(item => item.creation_mode === 'explicit' && item.generated === false))
-
-  const character = await jsonRequest(baseUrl, '/api/library/items', {
-    method: 'POST',
-    body: JSON.stringify({ kind: 'character', content: { name: 'Explicit API Character' } }),
-  })
-  assert.equal(character.response.status, 201)
-  assert.equal(character.body.item.description, '')
 
   const story = await jsonRequest(baseUrl, '/api/library/items', {
     method: 'POST',
-    body: JSON.stringify({ kind: 'story', content: { title: 'Explicit API Story', cast: [{ character_id: character.body.item.id }] } }),
+    body: JSON.stringify({ kind: 'story', content: { title: 'Explicit API Story', cast: [{ character: { name: 'Explicit API Actor' } }] } }),
   })
   assert.equal(story.response.status, 201)
   assert.ok(story.body.source.digest)
   assert.equal(story.body.item.cast[0].role, '')
+  assert.equal(story.body.item.cast[0].character.description, '')
 
   const implicit = await jsonRequest(baseUrl, '/api/library/items', {
     method: 'POST',
-    body: JSON.stringify({ kind: 'character', brief: 'Invent the rest for me.' }),
+    body: JSON.stringify({ kind: 'story', brief: 'Invent the rest for me.' }),
   })
   assert.equal(implicit.response.status, 400)
   assert.equal(implicit.body.error.code, 'explicit_content_required')
@@ -115,11 +114,11 @@ await test('the generic Library API accepts explicit content and rejects fixed-b
 
 await test('home is a projection of durable Library items and conversations, not generated drafts', async t => {
   const { app } = await testApp(t)
-  app.library.add({ kind: 'character', content: { name: 'Framework Character' } })
+  app.library.add({ kind: 'story', content: { title: 'Framework Story', cast: [{ character: { name: 'Framework Actor' } }] } })
   const home = app.repository.getHome()
   assert.ok(home.continue.length >= 1)
-  assert.ok(home.characters.some(item => item.name === 'Framework Character'))
-  assert.ok(home.stories.length >= 1)
+  assert.equal(Object.hasOwn(home, 'characters'), false)
+  assert.ok(home.stories.some(item => item.title === 'Framework Story'))
   assert.equal(Object.hasOwn(home, 'drafts'), false)
 })
 

@@ -383,7 +383,7 @@ writeFileSync(join(releaseDir, 'ARTIFACT_VERIFICATION.md'), [
   'The browser process available in this execution environment is not used as a release gate. HTTP, SSE, static browser modules, and user journeys are covered by deterministic tests.',
 ].join('\n'))
 
-writeFileSync(join(releaseDir, '交付说明.md'), `# Harness Tavern ${version} 交付说明\n\n本版本采用框架优先的内容模型：普通玩家只需要选择角色或故事并开始聊天；内容作者可以建立空白 Character / Story 标准结构、完整编辑或导入已有文件。核心不会通过固定 Prompt 从 brief 补写题材、人物或情节。\n\n分享支持公开预览、完整可玩包、导入预检、冲突策略和撤销；扩展采用声明式无代码格式，不执行导入包中的 JavaScript。\n\n快速启动：\n\n\`\`\`bash\nunzip harness-tavern-${version}-source.zip\ncd harness-tavern-${version}\nnpm start\n\`\`\`\n\n默认地址：\`http://127.0.0.1:8787\`。内置演示模型无需 API Key。\n`)
+writeFileSync(join(releaseDir, '交付说明.md'), `# Harness Tavern ${version} 交付说明\n\n本版本采用框架优先的内容模型：普通玩家选择 Story 并开始 Playthrough；内容作者可以建立空白 Story 标准结构、完整编辑或导入已有文件。核心不会通过固定 Prompt 从 brief 补写题材、人物或情节。\n\n分享支持公开预览、完整可玩包、导入预检、冲突策略和撤销；扩展采用声明式无代码格式，不执行导入包中的 JavaScript。\n\n快速启动：\n\n\`\`\`bash\nunzip harness-tavern-${version}-source.zip\ncd harness-tavern-${version}\nnpm start\n\`\`\`\n\n默认地址：\`http://127.0.0.1:8787\`。Harness Tavern 不内置模型；开始 Playthrough 前请在设置中连接 DeepSeek、OpenRouter、本地模型或其他兼容服务。\n`)
 
 const componentArtifacts = [
   sourceZip,

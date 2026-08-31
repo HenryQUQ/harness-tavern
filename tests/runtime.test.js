@@ -5,17 +5,24 @@ import { SAMPLE_IDS } from '../src/domain/seed.js'
 import { reduceEvents } from '../src/domain/projection.js'
 import { thinkingPlan } from '../src/runtime/thinking.js'
 import { validateOperations } from '../src/runtime/operations.js'
+import { rollContinuitySummary } from '../src/runtime/turn-runtime.js'
 
-await test('runs one unified Tavern transaction with multiple character messages', async t => {
+await test('runs one unified Tavern transaction with one Storyteller beat for an ensemble', async t => {
   const { app } = await testApp(t)
   const result = await app.turns.run(SAMPLE_IDS.conversation, { content: 'What does each of you think we should do first?' })
   assert.equal(result.thinking_intensity, 'auto')
   assert.equal(result.effective_thinking_intensity, 'high')
-  assert.equal(result.messages.length, 3)
-  assert.deepEqual(result.messages.map(message => message.character_id), [SAMPLE_IDS.mira, SAMPLE_IDS.rowan, SAMPLE_IDS.lyra])
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].character_id, 'narrator')
+  assert.deepEqual(result.messages[0].participant_ids, [SAMPLE_IDS.mira, SAMPLE_IDS.rowan, SAMPLE_IDS.lyra])
   const events = app.repository.events(SAMPLE_IDS.conversation)
   assert.ok(events.some(event => event.type === 'turn.completed'))
   assert.ok(events.some(event => event.type === 'model.usage'))
+  assert.ok(events.some(event => event.type === 'summary.updated'))
+  const story = app.repository.getStory(SAMPLE_IDS.story)
+  const projection = reduceEvents(events, story.initial_state)
+  assert.match(projection.summary, /\[Beat 1\]/)
+  assert.match(projection.summary, /What does each of you think/)
 })
 
 await test('state operations are committed after a valid model envelope', async t => {
@@ -24,6 +31,78 @@ await test('state operations are committed after a valid model envelope', async 
   const story = app.repository.getStory(SAMPLE_IDS.story)
   const projection = reduceEvents(app.repository.events(SAMPLE_IDS.conversation), story.initial_state)
   assert.ok(projection.memories.some(memory => /Henry/.test(memory.content)))
+})
+
+await test('bounded recent history recalls a relevant older beat without restoring the whole transcript', async t => {
+  const { app } = await testApp(t)
+  const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
+  const story = app.repository.getStory(SAMPLE_IDS.story)
+  const cast = app.repository.listConversationCast(conversation.id)
+  const projection = reduceEvents(app.repository.events(conversation.id), story.initial_state)
+  projection.messages = [
+    { event_id: 1, role: 'assistant', actor_id: 'narrator', content: 'The cobalt archive key was hidden under the river stair.' },
+    ...Array.from({ length: 5 }, (_, index) => ({ event_id: index + 2, role: 'assistant', actor_id: 'narrator', content: `Unrelated recent weather beat ${index}.` })),
+  ]
+  const context = app.contextBuilder.buildNarration({
+    conversation: { ...conversation, prompt: { ...conversation.prompt, history_messages: 2 } },
+    story,
+    persona: null,
+    cast,
+    projection,
+    participantIds: [],
+    userMessage: 'I look again for the cobalt archive key.',
+    turnReceiptIds: [],
+  })
+  assert.ok(context.manifest.included.some(item => item.source === 'retrieved-history'))
+  assert.match(context.messages.map(item => item.content).join('\n'), /cobalt archive key was hidden/)
+  assert.equal(context.messages.some(item => /weather beat 0/.test(item.content)), false)
+})
+
+await test('two thousand message history stays bounded, recalls a distant clue, and builds within the local performance budget', async t => {
+  const { app } = await testApp(t)
+  const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
+  const story = app.repository.getStory(SAMPLE_IDS.story)
+  const cast = app.repository.listConversationCast(conversation.id)
+  const projection = reduceEvents(app.repository.events(conversation.id), story.initial_state)
+  projection.messages = [
+    { event_id: 1, role: 'assistant', actor_id: 'narrator', content: 'The obsidian astrolabe was sealed behind the river stair beneath a cobalt sigil.' },
+    ...Array.from({ length: 1_999 }, (_, index) => ({
+      event_id: index + 2,
+      role: index % 2 ? 'assistant' : 'user',
+      actor_id: index % 2 ? 'narrator' : 'user',
+      content: `Ordinary continuity beat ${index} records rain, lamps, and quiet conversation token-${index}.`,
+    })),
+  ]
+  let summary = ''
+  for (let beat = 1; beat <= 90; beat += 1) summary = rollContinuitySummary(summary, {
+    turnNumber: beat,
+    userMessage: `Long-running player beat ${beat} ${'detail '.repeat(18)}`,
+    narration: `Long-running Storyteller beat ${beat} ${'continuity '.repeat(24)}`,
+  })
+  projection.summary = summary
+
+  const started = performance.now()
+  const context = app.contextBuilder.buildNarration({
+    conversation: { ...conversation, prompt: { ...conversation.prompt, history_messages: 80 } },
+    story,
+    persona: app.repository.getPersona(conversation.persona_id),
+    cast,
+    projection,
+    participantIds: [SAMPLE_IDS.mira],
+    userMessage: 'Where is the obsidian astrolabe and its cobalt sigil?',
+    turnReceiptIds: [],
+  })
+  const elapsedMs = performance.now() - started
+  const prompt = context.messages.map(item => item.content).join('\n')
+  assert.match(prompt, /obsidian astrolabe was sealed behind the river stair/)
+  assert.equal(context.manifest.included.filter(item => item.source === 'chat-history').length, 80)
+  assert.ok(context.manifest.included.filter(item => item.source === 'retrieved-history').length <= 8)
+  assert.ok(context.manifest.estimated_tokens > 0)
+  assert.ok(prompt.length < 80_000, `bounded prompt unexpectedly reached ${prompt.length} characters`)
+  assert.ok(summary.length <= 12_000)
+  assert.match(summary, /\[Beat 90\]/)
+  assert.doesNotMatch(summary, /\[Beat 1\]/)
+  assert.ok(elapsedMs < 2_500, `long-context assembly took ${elapsedMs.toFixed(1)}ms`)
 })
 
 await test('thinking intensity changes budgets without changing pipeline type', () => {
@@ -43,7 +122,7 @@ await test('automatic output planning does not impose a visible token ceiling', 
   assert.ok(plan.reasoningTokens > 0)
 })
 
-await test('reasoning strength applies to control planning while narration is a direct rendering pass', async t => {
+await test('reasoning strength applies to control and isolated Character planning while narration is a direct rendering pass', async t => {
   const { app } = await testApp(t)
   const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
   app.repository.updateConversation(conversation.id, { generation: { ...conversation.generation, pacing: 'focused' } })
@@ -58,14 +137,19 @@ await test('reasoning strength applies to control planning while narration is a 
   assert.equal(calls[0].phase, 'control')
   assert.notEqual(calls[0].thinkingIntensity, 'none')
   assert.equal(calls[0].jsonMode, true)
-  assert.ok(calls.slice(1).every(call => call.phase === 'narration' && call.thinkingIntensity === 'none' && call.jsonMode === false))
+  assert.equal(calls[1].phase, 'character')
+  assert.notEqual(calls[1].thinkingIntensity, 'none')
+  assert.equal(calls[1].jsonMode, true)
+  assert.equal(calls[2].phase, 'narration')
+  assert.equal(calls[2].thinkingIntensity, 'none')
+  assert.equal(calls[2].jsonMode, true)
   assert.ok(calls.every(call => call.maxOutputTokens === null))
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 3)
 })
 
 await test('truncated provider output records usage and leaves a resumable persisted command', async t => {
   const { app } = await testApp(t)
-  app.providers.adapters.set('mock', {
+  app.providers.adapters.set('test', {
     async complete() {
       return {
         content: '{"messages":[{"character_id":"char_mira_vale","content":"cut off',
@@ -96,7 +180,7 @@ await test('truncated provider output records usage and leaves a resumable persi
 
 await test('provider context-window stop reasons are treated as truncation, never as complete prose', async t => {
   const { app } = await testApp(t)
-  app.providers.adapters.set('mock', {
+  app.providers.adapters.set('test', {
     async complete() {
       return {
         content: 'A partial response that must not appear.',
@@ -116,7 +200,7 @@ await test('provider context-window stop reasons are treated as truncation, neve
 
 await test('malformed structured output is never displayed as a character reply', async t => {
   const { app } = await testApp(t)
-  app.providers.adapters.set('mock', {
+  app.providers.adapters.set('test', {
     async complete() {
       return {
         content: '{"messages":[{"character_id":"char_mira_vale","content":"raw json',
@@ -138,7 +222,7 @@ await test('malformed structured output is never displayed as a character reply'
 
 await test('complete plain text is safely wrapped while transcript protocol markers stay hidden', async t => {
   const { app } = await testApp(t)
-  app.providers.adapters.set('mock', {
+  app.providers.adapters.set('test', {
     async complete(request) {
       const system = request.messages.filter(message => message.role === 'system').map(message => message.content).join('\n')
       if (/control planner inside Harness Tavern/i.test(system)) {
@@ -180,7 +264,7 @@ await test('caps relationship changes and ignores unknown operation types', () =
   assert.equal(operations[0].delta, 0.2)
 })
 
-await test('context explicitly includes cast ids and separate private knowledge', async t => {
+await test('Director sees public Cast while an isolated Character sees only its own private knowledge', async t => {
   const { app } = await testApp(t)
   const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
   const story = app.repository.getStory(SAMPLE_IDS.story)
@@ -206,10 +290,27 @@ await test('context explicitly includes cast ids and separate private knowledge'
   assert.match(text, new RegExp(`CHARACTER_ID: ${SAMPLE_IDS.lyra}`))
   assert.match(text, /control planner inside Harness Tavern/i)
   assert.match(text, /CAUSAL CONTRACT/)
-  assert.match(text, /PRIVATE CONTEXT FOR Rowan Ash ONLY/i)
+  assert.doesNotMatch(text, /PRIVATE CONTEXT FOR Rowan Ash ONLY/i)
+  assert.doesNotMatch(text, /Rowan carries a lens fragment/i)
   assert.match(text, /CURRENT SCENE SOURCE/)
   assert.match(text, /Establish what each person knows and why they disagree/)
   assert.doesNotMatch(text, /coding agent powered by/i)
+
+  const rowan = cast.find(member => member.character_id === SAMPLE_IDS.rowan)
+  const actorContext = app.contextBuilder.buildCharacter({
+    conversation,
+    story,
+    persona: app.repository.getPersona(conversation.persona_id),
+    cast,
+    projection,
+    member: rowan,
+    userMessage: 'Who knows what?',
+    turnReceiptIds: [],
+  })
+  const actorText = actorContext.messages.map(message => message.content).join('\n')
+  assert.match(actorText, /PRIVATE CONTEXT FOR Rowan Ash ONLY/i)
+  assert.match(actorText, /Rowan carries a lens fragment/i)
+  assert.doesNotMatch(actorText, /Mira alone knows the ledger margins/i)
 })
 
 await test('the active Markdown scene reaches the model input without a Tavern hard truncation', async t => {
@@ -261,11 +362,13 @@ await test('conversation-specific AI input is included without replacing protect
   assert.ok(narrativeHistory.every(message => typeof message.content === 'string'))
 })
 
-await test('muted characters cannot speak while spotlight changes speaker priority', async t => {
+await test('muted characters cannot participate while spotlight changes Storyteller focus', async t => {
   const { app } = await testApp(t)
   app.repository.updateConversationCast(SAMPLE_IDS.conversation, SAMPLE_IDS.rowan, { muted: true })
   app.repository.updateConversationCast(SAMPLE_IDS.conversation, SAMPLE_IDS.lyra, { spotlight: true })
   const result = await app.turns.run(SAMPLE_IDS.conversation, { content: 'Lyra, lead this discussion. Mira may add one thought.' })
-  assert.equal(result.messages.some(message => message.character_id === SAMPLE_IDS.rowan), false)
-  assert.ok(result.messages.some(message => message.character_id === SAMPLE_IDS.lyra))
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].character_id, 'narrator')
+  assert.equal(result.messages[0].participant_ids.includes(SAMPLE_IDS.rowan), false)
+  assert.equal(result.messages[0].participant_ids[0], SAMPLE_IDS.lyra)
 })

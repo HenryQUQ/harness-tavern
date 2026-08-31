@@ -1,6 +1,6 @@
 # Editable Story sources
 
-`harness-tavern-story/v2` is the canonical authoring format for narrator-only, single-character and multi-character Stories. Cast size does not select a different schema, and the schema does not impose an arbitrary cast-count ceiling. Authors choose one file or a project directory according to the amount of material they want to manage; actual request capacity still depends on the selected model and provider.
+`harness-tavern-story/v2` is the canonical authoring format for narrator-only, single-cast, and ensemble Stories. Cast size does not select a different schema, and the schema does not impose an arbitrary cast-count ceiling. A Story is the complete playable aggregate: Cast, Lore, prompt layers, transforms, automations, causal definitions, and opening routes travel together. Authors choose one file or a project directory according to the amount of material they want to manage; actual request capacity still depends on the selected model and provider.
 
 SQLite is a validated runtime projection. It supplies fast queries, conversations and event state, but it is not the only copy of authored Story content. Conversation events, Playthrough state and provider configuration are never written into Story source files.
 
@@ -12,7 +12,7 @@ A compact Story can live in one file:
 quiet-crossing.story.tavern.json
 ```
 
-The file embeds Character Cards, Lorebooks, scenes, typed Actions, persistent Agendas, world schema, initial state and visibility rules. It contains stable keys such as `quiet-crossing` and `ferry-captain`, not local SQLite identifiers, export timestamps or integrity digests.
+The file embeds Story-owned Actor Character Cards, Lorebooks, scenes, typed Actions, persistent Agendas, safe transforms, prompt automations, world schema, initial state, and visibility rules. It contains stable keys such as `quiet-crossing` and `ferry-captain`, not local SQLite identifiers, export timestamps, or integrity digests.
 
 ## Project directory
 
@@ -35,7 +35,7 @@ quiet-crossing/
     └── 002-crossing.md
 ```
 
-The manifest uses `source` paths relative to `story.tavern.json`. Absolute paths and paths that leave the project directory are rejected. Character resources use a Character Card V2-compatible JSON shape. Lorebooks use the Harness Tavern v1 shape; common SillyTavern World Info entry collections are normalized when loaded. Markdown scene content is included in model context when its scene is active.
+The manifest uses `source` paths relative to `story.tavern.json`. Absolute paths and paths that leave the project directory are rejected. The `characters/` resource name and Character Card V2-compatible JSON shape are retained for ecosystem portability; these files are Story-owned Actors, not a separate Library product. Lorebooks use the Harness Tavern v1 shape; common SillyTavern World Info entry collections are normalized when loaded. Markdown scene content is included in model context when its scene is active.
 
 Character Cards inside a Story source are Story-owned authoring resources. Importing a new Story creates its own runtime character mapping even when another Story uses the same character key, so editing one project cannot capture or overwrite an unrelated Story. Compatibility edits to a mapped runtime Character are written back to every source that explicitly maps that Character. The active Markdown scene is passed to the model input without an additional Tavern hard truncation.
 
@@ -47,12 +47,17 @@ Character Cards inside a Story source are Story-owned authoring resources. Impor
 - `agendas` persist an owner, objective, priority, triggers, constraints, visibility, optional next Action, and fact-based lifecycle conditions.
 - `state_visibility` maps world paths to audiences such as `user`, `public`, `director`, or a Character key.
 - `prompt_graph` is portable prompt-assembly metadata; the protected causal and autonomy contracts remain runtime-owned.
+- `transforms` are bounded regex replacements scoped to an Actor or Story and to `user_input`, `model_input`, `model_output`, or `display`.
+- `automations` inject declarative authored instructions at control, isolated Character, or narration boundaries; they cannot execute code or mutate state.
+- `cast[].metadata.actor_runtime` configures an Actor's `initiative`, `initial_presence`, `drives`, `fears`, `values`, `mannerisms`, and `reveal_policy` without creating a separate Character product.
 
-The model may propose an Action, but only its registered definition can resolve it and write facts. Narration is generated after receipts and cannot create state.
+Lore entries may define primary and secondary keywords, selective activation, `constant`, `enabled`, `order`, and audience visibility. Supported Story/Actor/Persona/message/state macros are expanded at context or opening time. Imported JavaScript, Quick Replies, and executable extension payloads are never evaluated.
 
-An Agenda remains active by default. The planner can choose `act` or `defer`, and an Agenda Action must be performed by its owner. Only deterministic `complete_when`, `fail_when`, `pause_when`, and `resume_when` conditions may change lifecycle status. Conditions use authoritative projection paths and the same comparison vocabulary as Action preconditions:
+The Director may propose player Actions, and an isolated Character runtime may propose Actions for its assigned Actor, but only registered definitions can resolve and write facts. Character belief and emotion updates are separately event-sourced inner state, never physical-world effects. Narration is generated after receipts and cannot create state.
 
-A Character Card's goals become fallback Agendas in a plain character chat or when that character has no Story-authored Agenda. Once a Story defines an Agenda for an owner, that contextual Agenda replaces the same owner's generic card-goal loops for that playthrough. This keeps durable intent without asking the control model to evaluate several competing copies of one character's motivation on every turn.
+An Agenda remains active by default. Its owning Character runtime can choose `act` or `defer`, and an Agenda Action is identity-bound to that owner. Only deterministic `complete_when`, `fail_when`, `pause_when`, and `resume_when` conditions may change lifecycle status. Conditions use authoritative projection paths and the same comparison vocabulary as Action preconditions:
+
+A Character Card's goals become fallback Agendas when its Actor has no Story-authored Agenda. Once a Story defines an Agenda for an owner, that contextual Agenda replaces the same owner's generic card-goal loops for that Playthrough. This keeps durable intent without asking the control model to evaluate several competing copies of one actor's motivation on every turn.
 
 ```json
 {
@@ -76,7 +81,7 @@ See the complete [multi-file example](../examples/stories/midnight-at-the-glass-
 ```text
 editable files
 → JSON Schema and reference validation
-→ Character/Lorebook normalization
+→ Actor Character Card / Lorebook / Runtime normalization
 → stable-key resolution
 → transactional SQLite projection
 → Story runtime and AI context

@@ -16,3 +16,4 @@ Accepted records are immutable. Superseding decisions add a new record and link 
 
 - [ADR 0001: Preserve a local-first single-owner boundary](0001-local-first-single-owner-boundary.md)
 - [ADR 0002: Keep core content authoring framework-first and explicit](0002-framework-first-explicit-content.md)
+- [ADR 0003: Make Story the only playable content aggregate](0003-story-is-the-playable-aggregate.md)

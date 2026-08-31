@@ -1,17 +1,43 @@
 # Contributing to Harness Tavern
 
-Thank you for helping build roleplay worlds that remain coherent, portable, and owned by their users.
+> Pull up a chair. A better Tavern can begin with a question, not only a pull request.
 
-This file is the quick contribution entrypoint recognized by GitHub. The complete explanation of the project's construction philosophy, runtime lifecycle, repository layout, testing strategy, and change-specific checklists is in the [Developer guide](docs/DEVELOPMENT.md).
+Thank you for helping build a roleplaying tool that is easy to enter and difficult for its own AI to gaslight: worlds remember, Characters keep private knowledge, actions leave consequences, and players retain control of themselves.
 
-## Before opening code
+This is the quick contribution entrypoint recognized by GitHub. The complete construction philosophy, runtime lifecycle, repository map, test strategy, and change-specific checklists live in the [Developer guide](docs/DEVELOPMENT.md).
 
-- Use [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions) for open-ended product and architecture ideas.
+## You can contribute before you code
+
+Useful contributions include:
+
+- a redacted playtest where memory, agency, pacing, or secrecy worked especially well—or clearly failed;
+- a Story or Character-authoring example that exposes a missing affordance;
+- a UX sketch that makes a deep runtime concept feel calmer and more conversational;
+- a compatibility sample from a provider or roleplaying format;
+- a documentation correction, failing test, focused bug fix, or complete feature patch.
+
+Do not publish private transcripts, Character secrets, credentials, or databases to illustrate a problem. A minimal fictional reproduction is better evidence.
+
+## Choose the right table
+
+- Use [GitHub Discussions](https://github.com/HenryQUQ/harness-tavern/discussions) for questions, playtest observations, early product ideas, UX sketches, architecture trade-offs, and requests for collaborators.
 - Use [GitHub Issues](https://github.com/HenryQUQ/harness-tavern/issues) for reproducible defects and scoped feature outcomes.
 - Report suspected vulnerabilities privately through [SECURITY.md](SECURITY.md).
 - Read [Architecture](docs/ARCHITECTURE.md) before changing State, Events, Actions, Observations, Agendas, privacy projections, or provider contracts.
 
 Every change should preserve the core boundaries: State is authoritative, prose cannot create facts, the player retains autonomy, knowledge is actor-scoped, provider failures are resumable, and portable content never contains credentials.
+
+## Start a useful discussion
+
+You do not need a finished design. A strong opening post usually contains:
+
+1. the moment or workflow you observed;
+2. who is affected and what they were trying to do;
+3. the property that should remain true;
+4. a small example, sketch, or reproduction when possible;
+5. known privacy, compatibility, or migration constraints.
+
+The questions currently most worth challenging are listed in [Open design conversations](docs/DEVELOPMENT.md#open-design-conversations). Maintainer agreement in a Discussion is useful direction, but the implementation still needs the normal tests and review.
 
 ## Set up the repository
 

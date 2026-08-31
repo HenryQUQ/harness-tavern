@@ -6,6 +6,9 @@ import { constantTimeEqual, id } from '../util.js'
 import { reduceEvents, visibleObservations } from '../domain/projection.js'
 import { buildPlayerJournal } from '../domain/journal.js'
 import { THINKING_INTENSITIES } from '../runtime/thinking.js'
+import { ActionRegistry } from '../runtime/action-registry.js'
+import { characterPublicRuntime, normalizeCharacterRuntimeConfig } from '../runtime/character-runtime.js'
+import { applyDisplayTransforms, applyStoryTransforms, evaluateStoryLore, normalizeTransform, storyLoreEntries } from '../runtime/story-runtime.js'
 import { isStorySourceInput } from '../story/source.js'
 import { PRODUCT_NAME, PRODUCT_VERSION } from '../version.js'
 
@@ -27,7 +30,7 @@ function securityHeaders(response, requestId) {
   response.setHeader('X-Request-Id', requestId)
   response.setHeader('X-Content-Type-Options', 'nosniff')
   response.setHeader('Referrer-Policy', 'same-origin')
-  response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  response.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()')
   response.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
   response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://openrouter.ai; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://openrouter.ai")
   if (response.req?.url?.startsWith('/api/')) response.setHeader('Cache-Control', 'no-store')
@@ -65,6 +68,18 @@ function sendJsonDownload(response, value, filename) {
   return sendJson(response, 200, value, { 'content-disposition': `attachment; filename="${String(filename).replace(/[^A-Za-z0-9._-]/g, '-')}.json"` })
 }
 
+function sendAssetContent(response, asset) {
+  const filename = String(asset.metadata.filename).replace(/["\\\r\n]/g, '-')
+  const fallbackFilename = filename.replace(/[^\x20-\x7E]/g, '_')
+  response.writeHead(200, {
+    'content-type': asset.metadata.mime_type,
+    'content-length': asset.data.length,
+    'content-disposition': `inline; filename="${fallbackFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    'cache-control': 'private, no-store',
+  })
+  response.end(asset.data)
+}
+
 function redirect(response, location) {
   response.writeHead(302, { location, 'cache-control': 'no-store' })
   response.end()
@@ -95,6 +110,7 @@ function playerCharacter(character) {
     scenario: character.scenario,
     first_message: character.first_message,
     speech_style: character.speech_style,
+    alternate_greetings: Array.isArray(character.metadata?.alternate_greetings) ? character.metadata.alternate_greetings : [],
     avatar_url: character.avatar_url,
     tags: character.tags,
     updated_at: character.updated_at,
@@ -126,12 +142,19 @@ function playerStory(story, playthroughs = []) {
     })),
     public_lore: story.lore.filter(item => !item.visibility || item.visibility === 'public'),
     scene_count: story.scenes.length,
+    runtime_summary: {
+      lore: storyLoreEntries(story, story.cast).length,
+      transforms: story.runtime?.transforms?.length ?? 0,
+      automations: story.runtime?.automations?.length ?? 0,
+      actions: story.runtime?.actions?.length ?? 0,
+      agendas: story.runtime?.agendas?.length ?? 0,
+    },
     playthroughs,
     updated_at: story.updated_at,
   }
 }
 
-function playerCast(cast) {
+function playerCast(cast, projection = null) {
   return cast.map(member => ({
     conversation_id: member.conversation_id,
     character_id: member.character_id,
@@ -141,7 +164,119 @@ function playerCast(cast) {
     muted: member.muted,
     spotlight: member.spotlight,
     character: playerCharacter(member.character),
+    runtime: characterPublicRuntime(member, projection?.characterStates?.[member.character_id]),
   }))
+}
+
+function words(value) {
+  return new Set(String(value ?? '').toLocaleLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [])
+}
+
+function wordScore(query, value) {
+  const queryWords = words(query)
+  const candidateWords = words(value)
+  if (!queryWords.size || !candidateWords.size) return 0
+  let shared = 0
+  for (const token of queryWords) if (candidateWords.has(token)) shared += 1
+  return shared / Math.sqrt(queryWords.size * candidateWords.size)
+}
+
+function storyRuntimeDebug(app, storyId, input = {}) {
+  const story = app.repository.getStory(storyId)
+  const userMessage = String(input.user_message ?? '').trim()
+  const conversation = input.conversation_id ? app.repository.getConversation(input.conversation_id) : null
+  if (conversation && conversation.story_id !== story.id) {
+    const error = new Error('The selected conversation does not belong to this Story')
+    error.status = 409
+    error.code = 'story_conversation_mismatch'
+    throw error
+  }
+  const cast = conversation ? app.repository.listConversationCast(conversation.id) : story.cast.map((member, index) => ({ ...member, muted: false, spotlight: false, sort_order: member.sort_order ?? index }))
+  const projection = reduceEvents(conversation ? app.repository.events(conversation.id) : [], story.initial_state)
+  const activeCast = cast.filter(member => !member.muted)
+  const lore = evaluateStoryLore({ story, cast: activeCast, messages: projection.messages, userMessage, includeDirector: true })
+  const transformedInput = applyStoryTransforms(story, 'user_input', userMessage, { actorId: 'user', cast: activeCast })
+  const participants = activeCast.map(member => {
+    const name = member.character?.name ?? member.character_id
+    const mentioned = String(userMessage).toLocaleLowerCase().includes(String(name).toLocaleLowerCase())
+    return {
+      character_id: member.character_id,
+      name,
+      score: Number(member.spotlight) * 10 + Number(mentioned) * 5 - Number(member.sort_order ?? 0) / 100,
+      reasons: [member.spotlight ? 'spotlight' : '', mentioned ? 'mentioned' : '', 'available'].filter(Boolean),
+    }
+  }).sort((left, right) => right.score - left.score)
+  const actionRegistry = new ActionRegistry({ story, cast: activeCast })
+  const actions = actionRegistry.describe().map(action => ({
+    ...action,
+    relevance: wordScore(userMessage, `${action.key} ${action.label} ${action.description}`),
+  })).sort((left, right) => right.relevance - left.relevance)
+  const transformTrace = (story.runtime?.transforms ?? []).map((candidate, index) => {
+    const rule = normalizeTransform(candidate, index)
+    if (!rule) return { id: candidate?.id ?? `transform-${index + 1}`, valid: false, reason: 'invalid_or_unsafe_regex' }
+    const stages = {}
+    for (const stage of rule.stages) {
+      const sample = stage === 'lore' ? lore.entries.map(entry => entry.content).join('\n') : userMessage
+      const output = applyStoryTransforms({ runtime: { transforms: [rule] } }, stage, sample, { actorId: stage === 'user_input' ? 'user' : 'narrator', cast: activeCast })
+      stages[stage] = { changed: output !== sample, preview: output.slice(0, 300) }
+    }
+    return { id: rule.id, name: rule.name, valid: true, enabled: rule.enabled, stages }
+  })
+  const debugConversation = conversation ?? {
+    id: 'runtime-debug', model_id: '', thinking_intensity: 'medium',
+    generation: { response_length: 'natural' },
+    prompt: { history_messages: 80, context_budget_tokens: null, custom_instructions: '' },
+  }
+  const control = app.contextBuilder.buildControl({
+    conversation: debugConversation, story, persona: null, cast: activeCast, projection,
+    userMessage: transformedInput, resolvedIntensity: 'medium', actionRegistry,
+  })
+  return {
+    story_id: story.id,
+    conversation_id: conversation?.id ?? null,
+    storyteller: { mode: 'single_storyteller_beat', mandatory_speakers: 0, participant_candidates: participants },
+    character_runtime: {
+      mode: 'isolated_actor_plans',
+      profiles: activeCast.map(member => ({
+        character_id: member.character_id,
+        name: member.character.name,
+        ...normalizeCharacterRuntimeConfig(member),
+        public_state: characterPublicRuntime(member, projection.characterStates?.[member.character_id]),
+      })),
+    },
+    input: { original: userMessage, transformed: transformedInput },
+    lore: { active_ids: lore.entries.map(entry => String(entry.id ?? entry.key)), trace: lore.trace },
+    transforms: transformTrace,
+    actions,
+    context: control.manifest,
+    retrieval: app.retrievalIndex.search({ storyId: story.id, query: userMessage, limit: 6 }).map(item => ({ source_type: item.source_type, source_id: item.source_id, score: item.score, preview: item.content.slice(0, 240) })),
+  }
+}
+
+function usageOverview(app) {
+  const totals = app.db.raw.prepare(`
+    SELECT COUNT(*) AS calls,
+      COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+      COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+      COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(cost_usd), 0) AS cost_usd
+    FROM usage_ledger
+  `).get()
+  const byModel = app.db.raw.prepare(`
+    SELECT provider_id, model_id, COUNT(*) AS calls,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(cost_usd), 0) AS cost_usd,
+      MAX(created_at) AS last_used_at
+    FROM usage_ledger GROUP BY provider_id, model_id ORDER BY last_used_at DESC
+  `).all()
+  const daily = app.db.raw.prepare(`
+    SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS calls,
+      COALESCE(SUM(total_tokens), 0) AS total_tokens,
+      COALESCE(SUM(cost_usd), 0) AS cost_usd
+    FROM usage_ledger GROUP BY day ORDER BY day DESC LIMIT 30
+  `).all().reverse()
+  return { totals, by_model: byModel, daily, retrieval: app.retrievalIndex.stats() }
 }
 
 function playerManifest(manifest) {
@@ -216,8 +351,11 @@ function playerLoop(run) {
   }
 }
 
-function playerTurnResult(result) {
+function playerTurnResult(app, conversationId, result) {
   const causal = playerCausalResults(result.action_receipts, result.observations)
+  const conversation = app.repository.getConversation(conversationId)
+  const story = conversation.story_id ? app.repository.getStory(conversation.story_id) : null
+  const cast = app.repository.listConversationCast(conversationId)
   return {
     turn_uid: result.turn_uid,
     loop_id: result.loop_id,
@@ -226,7 +364,7 @@ function playerTurnResult(result) {
     phase: result.phase,
     thinking_intensity: result.thinking_intensity,
     effective_thinking_intensity: result.effective_thinking_intensity,
-    messages: result.messages ?? [],
+    messages: story ? applyDisplayTransforms(story, result.messages ?? [], cast) : result.messages ?? [],
     action_receipts: causal.receipts,
     observations: causal.observations,
     pending_action_count: Array.isArray(result.pending_actions) ? result.pending_actions.length : 0,
@@ -251,7 +389,6 @@ function playerHome(app) {
       cast: item.cast,
       favorite: item.favorite,
     })),
-    characters: home.characters.map(item => ({ ...playerCharacter(item), favorite: Boolean(item.favorite) })),
     stories: home.stories.map(item => ({ ...playerStory(item, item.playthroughs), favorite: Boolean(item.favorite) })),
   }
 }
@@ -264,10 +401,6 @@ function playerConversationListItem(app, conversation) {
     name: member.character.name,
     avatar_url: member.character.avatar_url,
   }))
-  const characterGroupId = publicCast.length === 1
-    ? publicCast[0].id
-    : `ensemble:${publicCast.map(member => member.id).join(':') || 'general'}`
-
   return {
     ...conversation,
     group: story ? {
@@ -278,11 +411,11 @@ function playerConversationListItem(app, conversation) {
       cover_url: story.cover_url,
       cast: publicCast,
     } : {
-      kind: 'character',
-      id: characterGroupId,
-      title: publicCast.map(member => member.name).join(', ') || 'General',
-      subtitle: publicCast.length > 1 ? 'Ensemble chat' : 'Character chat',
-      avatar_url: publicCast.length === 1 ? publicCast[0].avatar_url : '',
+      kind: 'story',
+      id: `legacy-story:${conversation.id}`,
+      title: conversation.title || 'Recovered Story',
+      subtitle: 'Legacy Story awaiting migration',
+      cover_url: '',
       cast: publicCast,
     },
   }
@@ -292,6 +425,7 @@ function publicBootstrap(app) {
   return {
     version: PRODUCT_VERSION,
     product: PRODUCT_NAME,
+    deployment: { scope: 'local-single-owner', multi_tenant: false },
     capabilities: [
       'framework-first-content',
       'explicit-content-lifecycle',
@@ -313,6 +447,17 @@ function publicBootstrap(app) {
       'resumable-turns',
       'sillytavern-full-migration',
       'complete-content-editors',
+      'story-owned-cast',
+      'story-bundled-runtime',
+      'single-storyteller-beat',
+      'isolated-character-runtime',
+      'persistent-character-state',
+      'structured-scene-blocks',
+      'bounded-long-context-retrieval',
+      'conversation-attachments',
+      'provider-media-capability-gating',
+      'runtime-debugger',
+      'usage-diagnostics',
     ],
     user_profile: app.repository.getUserProfile(),
     home: playerHome(app),
@@ -325,7 +470,6 @@ function publicBootstrap(app) {
     extensions: app.extensions.list().map(item => ({ id: item.id, slug: item.slug, name: item.name, version: item.version, description: item.manifest.description, enabled: item.enabled, source: item.source })),
     contributions: app.extensions.contributions(),
     content_types: app.library.contentTypes(),
-    characters: app.repository.listCharacters().map(playerCharacter),
     personas: app.repository.listPersonas(),
     stories: app.repository.listStories().map(story => playerStory(story, app.repository.listPlaythroughs(story.id))),
     playthroughs: app.repository.listPlaythroughs(),
@@ -333,7 +477,7 @@ function publicBootstrap(app) {
     sample: {
       story_id: 'story_glass_observatory',
       conversation_id: app.db.raw.prepare('SELECT id FROM conversations WHERE id = ?').get('conv_glass_observatory_test')?.id ?? null,
-      character_ids: ['char_mira_vale', 'char_rowan_ash', 'char_lyra_voss'],
+      cast_member_ids: ['char_mira_vale', 'char_rowan_ash', 'char_lyra_voss'],
     },
   }
 }
@@ -350,11 +494,15 @@ function conversationView(app, conversationId, { creator = false } = {}) {
   const publicCausal = playerCausalResults(projection.receipts.slice(-20), projection.observations.slice(-100))
   const base = {
     conversation,
+    media_capabilities: conversation.connection_id
+      ? app.providers.mediaCapabilities(conversation.connection_id, conversation.model_id)
+      : { images: false, text: true, audio: false },
     story: story ? playerStory(story, app.repository.listPlaythroughs(story.id)) : null,
     persona,
-    cast: playerCast(cast),
+    cast: playerCast(cast, projection),
+    character_runtime: cast.map(member => characterPublicRuntime(member, projection.characterStates?.[member.character_id])),
     branches,
-    messages: projection.messages,
+    messages: creator || !story ? projection.messages : applyDisplayTransforms(story, projection.messages, cast),
     journal,
     causal: {
       state_revision: projection.stateRevision,
@@ -393,7 +541,7 @@ export function createHttpServer(app) {
       }
 
       if (method === 'GET' && pathname === '/api/health') {
-        return sendJson(response, 200, { status: 'ok', version: PRODUCT_VERSION, database: app.db.integrityCheck(), uptime_seconds: Math.round(process.uptime()) })
+        return sendJson(response, 200, { status: 'ok', version: PRODUCT_VERSION, deployment_scope: 'local-single-owner', multi_tenant: false, database: app.db.integrityCheck(), uptime_seconds: Math.round(process.uptime()) })
       }
       let params
       if (method === 'GET' && (params = matchPath(pathname, '/api/public/shares/:token/download'))) {
@@ -415,7 +563,6 @@ export function createHttpServer(app) {
       if (method === 'POST' && pathname === '/api/library/items') return sendJson(response, 201, app.library.add(await bodyJson(request, app.config.requestBodyLimit)))
       if (method === 'GET' && pathname === '/api/creator/bootstrap') {
         return sendJson(response, 200, {
-          characters: app.repository.listCharacters(),
           stories: app.repository.listStories(),
           personas: app.repository.listPersonas(),
           extensions: app.extensions.list(),
@@ -442,9 +589,13 @@ export function createHttpServer(app) {
         app.storySources.updateRuntimeStory(params.id, story ?? fields, { expectedDigest })
         return sendJson(response, 200, app.storySources.getRuntimeStory(params.id))
       }
+      if (method === 'POST' && (params = matchPath(pathname, '/api/creator/stories/:id/runtime-debug'))) {
+        return sendJson(response, 200, storyRuntimeDebug(app, params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      }
 
       if (method === 'GET' && pathname === '/api/user-profile') return sendJson(response, 200, app.repository.getUserProfile())
       if (method === 'PATCH' && pathname === '/api/user-profile') return sendJson(response, 200, app.repository.updateUserProfile(await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'GET' && pathname === '/api/usage') return sendJson(response, 200, usageOverview(app))
 
       if (method === 'GET' && (params = matchPath(pathname, '/api/characters/:id'))) return sendJson(response, 200, playerCharacter(app.repository.getCharacter(params.id)))
       if (method === 'GET' && (params = matchPath(pathname, '/api/stories/:id'))) {
@@ -458,6 +609,10 @@ export function createHttpServer(app) {
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/conversations/:id'))) return sendJson(response, 200, conversationView(app, params.id))
       if (method === 'GET' && (params = matchPath(pathname, '/api/creator/conversations/:id/inspect'))) return sendJson(response, 200, conversationView(app, params.id, { creator: true }))
+      if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/assets'))) return sendJson(response, 201, app.assets.create(params.id, await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'GET' && (params = matchPath(pathname, '/api/assets/:id'))) return sendJson(response, 200, app.assets.get(params.id))
+      if (method === 'GET' && (params = matchPath(pathname, '/api/assets/:id/content'))) return sendAssetContent(response, app.assets.content(params.id))
+      if (method === 'DELETE' && (params = matchPath(pathname, '/api/assets/:id'))) return sendJson(response, 200, app.assets.remove(params.id))
 
       if (method === 'POST' && pathname === '/api/favorites') {
         const input = await bodyJson(request, app.config.requestBodyLimit)
@@ -465,9 +620,14 @@ export function createHttpServer(app) {
       }
 
       if (method === 'POST' && pathname === '/api/playthroughs') return sendJson(response, 201, app.repository.createPlaythrough(await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'POST' && pathname === '/api/conversations') return sendJson(response, 201, app.repository.createConversation(await bodyJson(request, app.config.requestBodyLimit)))
+      if (method === 'POST' && pathname === '/api/conversations') {
+        const error = new Error('Start a Story playthrough through /api/playthroughs. Standalone Character conversations are no longer a product concept.')
+        error.status = 410
+        error.code = 'story_playthrough_required'
+        throw error
+      }
       if (method === 'PATCH' && (params = matchPath(pathname, '/api/conversations/:id'))) return sendJson(response, 200, app.repository.updateConversation(params.id, await bodyJson(request, app.config.requestBodyLimit)))
-      if (method === 'DELETE' && (params = matchPath(pathname, '/api/conversations/:id'))) return sendJson(response, 200, app.repository.deleteConversation(params.id))
+      if (method === 'DELETE' && (params = matchPath(pathname, '/api/conversations/:id'))) return sendJson(response, 200, app.assets.deleteConversation(params.id))
       if (method === 'PATCH' && (params = matchPath(pathname, '/api/conversations/:id/cast/:characterId'))) {
         return sendJson(response, 200, playerCast(app.repository.updateConversationCast(params.id, params.characterId, await bodyJson(request, app.config.requestBodyLimit))))
       }
@@ -476,10 +636,13 @@ export function createHttpServer(app) {
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/cancel'))) return sendJson(response, 200, { cancelled: app.turns.cancel(params.id) })
       if (method === 'GET' && (params = matchPath(pathname, '/api/conversations/:id/control-loops'))) return sendJson(response, 200, app.turns.listRuns(params.id).map(playerLoop))
       if (method === 'GET' && (params = matchPath(pathname, '/api/control-loops/:id'))) return sendJson(response, 200, playerLoop(app.turns.getRun(params.id)))
-      if (method === 'POST' && (params = matchPath(pathname, '/api/control-loops/:id/resume'))) return sendJson(response, 200, playerTurnResult(await app.turns.resume(params.id)))
+      if (method === 'POST' && (params = matchPath(pathname, '/api/control-loops/:id/resume'))) {
+        const run = app.turns.getRun(params.id)
+        return sendJson(response, 200, playerTurnResult(app, run.conversation_id, await app.turns.resume(params.id)))
+      }
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/turn'))) {
         const input = await bodyJson(request, app.config.requestBodyLimit)
-        return sendJson(response, 200, playerTurnResult(await app.turns.run(params.id, { content: String(input.content ?? '').trim(), idempotencyKey: input.idempotency_key ?? null })))
+        return sendJson(response, 200, playerTurnResult(app, params.id, await app.turns.run(params.id, { content: String(input.content ?? '').trim(), attachmentIds: input.attachment_ids ?? [], idempotencyKey: input.idempotency_key ?? null })))
       }
       if (method === 'POST' && (params = matchPath(pathname, '/api/conversations/:id/turn/stream'))) {
         const input = await bodyJson(request, app.config.requestBodyLimit)
@@ -493,11 +656,11 @@ export function createHttpServer(app) {
         const conversation = app.repository.getConversation(params.id)
         emit('turn.started', { thinking_intensity: conversation.thinking_intensity })
         try {
-          const result = await app.turns.run(params.id, { content: String(input.content ?? '').trim(), idempotencyKey: input.idempotency_key ?? null })
-          const publicResult = playerTurnResult(result)
+          const result = await app.turns.run(params.id, { content: String(input.content ?? '').trim(), attachmentIds: input.attachment_ids ?? [], idempotencyKey: input.idempotency_key ?? null })
+          const publicResult = playerTurnResult(app, params.id, result)
           for (const receipt of publicResult.action_receipts) emit('action.receipt', receipt)
           for (const observation of publicResult.observations) emit('observation.created', observation)
-          for (const message of result.messages) {
+          for (const message of publicResult.messages) {
             const chunks = message.content.match(/[\s\S]{1,64}/g) ?? []
             for (const chunk of chunks) emit('message.delta', { character_id: message.character_id, delta: chunk })
             emit('message.completed', message)
@@ -546,7 +709,7 @@ export function createHttpServer(app) {
         const profile = app.repository.getUserProfile()
         const pack = app.sharing.exportCollection({
           title: `${profile.name || 'My'} Tavern library`,
-          character_ids: app.repository.listCharacters().map(item => item.id),
+          character_ids: [],
           story_ids: app.repository.listStories().map(item => item.id),
           persona_ids: app.repository.listPersonas().map(item => item.id),
         })
@@ -633,6 +796,10 @@ export function createHttpServer(app) {
           refresh: url.searchParams.get('refresh') === 'true',
           signal: request.signal,
         }))
+      }
+      if (method === 'POST' && (params = matchPath(pathname, '/api/provider-connections/:id/test'))) {
+        const input = await bodyJson(request, app.config.requestBodyLimit)
+        return sendJson(response, 200, await app.providers.testConnection(params.id, { accountConnectionId: input.account_connection_id ?? null, signal: request.signal }))
       }
       if (method === 'GET' && (params = matchPath(pathname, '/api/provider-connections/:id/openrouter/providers'))) {
         return sendJson(response, 200, { providers: await app.providers.listOpenRouterProviders(params.id, { accountConnectionId: url.searchParams.get('account_connection_id'), signal: request.signal }) })

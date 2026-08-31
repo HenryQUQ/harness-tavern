@@ -1,6 +1,7 @@
 import { assert, cleanText, id, json, nowIso, stableStringify, uniqueStrings } from '../util.js'
 import { assertThinkingIntensity } from '../runtime/thinking.js'
 import { normalizeStoryAgendas } from '../runtime/action-registry.js'
+import { expandStoryMacros } from '../runtime/story-runtime.js'
 import { normalizeGeneration, normalizePrompt } from './generation-config.js'
 
 function characterFromRow(row) {
@@ -43,7 +44,10 @@ function storyFromRow(row, cast = []) {
     scenes: json(row.scenes_json, []),
     metadata: json(row.metadata_json, {}),
     share_policy: json(row.share_policy_json, {}),
-    runtime: json(row.runtime_json, { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
+    runtime: {
+      actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], transforms: [], automations: [],
+      ...json(row.runtime_json, {}),
+    },
     cast,
     world_rules_json: undefined,
     lore_json: undefined,
@@ -227,7 +231,7 @@ export class TavernRepository {
         stableStringify(Array.isArray(input.scenes) ? input.scenes.slice(0, 100) : []), stableStringify(input.metadata ?? {}),
         stableStringify(input.share_policy ?? {}), Number.isInteger(input.revision) ? input.revision : 1,
         ['private', 'unlisted', 'public'].includes(input.visibility) ? input.visibility : 'private',
-        stableStringify(input.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
+        stableStringify({ actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], transforms: [], automations: [], ...(input.runtime ?? {}) }),
       )
       this.#replaceStoryCast(storyId, input.cast ?? [])
     })
@@ -257,7 +261,7 @@ export class TavernRepository {
         stableStringify(Array.isArray(merged.scenes) ? merged.scenes.slice(0, 100) : []), stableStringify(merged.metadata ?? {}),
         stableStringify(merged.share_policy ?? {}), Number(current.revision || 1) + 1,
         ['private', 'unlisted', 'public'].includes(merged.visibility) ? merged.visibility : 'private',
-        stableStringify(merged.runtime ?? { actions: [], agendas: [], prompt_graph: {}, world_schema: {} }),
+        stableStringify({ actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], transforms: [], automations: [], ...(merged.runtime ?? {}) }),
         nowIso(), current.id,
       )
       if (input.cast !== undefined) this.#replaceStoryCast(current.id, input.cast)
@@ -346,6 +350,7 @@ export class TavernRepository {
         generation: input.generation ?? {},
         prompt: input.prompt ?? {},
         route: input.route ?? {},
+        skip_opening: Boolean(input.skip_opening),
       })
       this.db.raw.prepare('UPDATE playthroughs SET current_conversation_id = ?, updated_at = ? WHERE id = ?')
         .run(conversation.id, nowIso(), playthroughId)
@@ -378,13 +383,13 @@ export class TavernRepository {
     const explicitCharacterIds = uniqueStrings(input.character_ids, 20, 200)
     const defaultConnection = input.connection_id
       ? this.db.raw.prepare('SELECT * FROM provider_connections WHERE id = ?').get(input.connection_id)
-      : this.db.raw.prepare("SELECT * FROM provider_connections WHERE enabled = 1 ORDER BY CASE WHEN provider_id = 'mock' THEN 1 ELSE 0 END, created_at LIMIT 1").get()
+      : this.db.raw.prepare('SELECT * FROM provider_connections WHERE enabled = 1 ORDER BY created_at LIMIT 1').get()
     if (input.connection_id) assert(defaultConnection, 'Provider connection not found', 404, 'not_found')
     assert(defaultConnection?.enabled, 'Choose an enabled AI service before starting a conversation', 409, 'connection_required')
     const title = cleanText(input.title || story?.title || (explicitCharacterIds[0] ? this.getCharacter(explicitCharacterIds[0]).name : 'New conversation'), 200)
     const generation = normalizeGeneration(input.generation)
     const prompt = normalizePrompt(input.prompt)
-    const modelId = cleanText(input.model_id || defaultConnection.default_model || (defaultConnection.provider_id === 'mock' ? 'mock/roleplay-ensemble' : ''), 300)
+    const modelId = cleanText(input.model_id || defaultConnection.default_model, 300)
     assert(modelId, 'Choose a model before starting a conversation', 409, 'model_required')
     this.db.transaction(() => {
       this.db.raw.prepare(`
@@ -428,7 +433,10 @@ export class TavernRepository {
   }
 
   #appendOpening(conversationId, branchId, story) {
+    const conversation = this.getConversation(conversationId)
     const cast = this.listConversationCast(conversationId)
+    const persona = conversation.persona_id ? this.getPersona(conversation.persona_id) : null
+    const macroBase = { story, persona, projection: { messages: [], scene: story?.scenes?.[0] ?? null } }
     if (story) {
       for (const agenda of normalizeStoryAgendas(story, cast)) {
         this.db.appendEvent({ conversationId, branchId, type: 'agenda.created', actorId: agenda.owner_id, payload: agenda })
@@ -441,14 +449,26 @@ export class TavernRepository {
         payload: { id: firstScene.id || 'opening', title: firstScene.title || 'Opening scene', location: firstScene.location || '', time: firstScene.time || '' },
       })
     }
-    if (story?.opening_scene) {
-      this.db.appendEvent({ conversationId, branchId, type: 'assistant.message', actorId: 'narrator', payload: { content: story.opening_scene, metadata: { opening: true } } })
-    }
-    for (const member of cast) {
-      if (!member.character.first_message) continue
+    const primary = cast.find(member => member.spotlight) ?? cast[0] ?? null
+    const routedIndex = primary ? Number(conversation.route?.greeting_indices?.[primary.character_id]
+      ?? conversation.route?.opening_greeting_index
+      ?? 0) : 0
+    const alternateGreetings = Array.isArray(primary?.character.metadata?.alternate_greetings) ? primary.character.metadata.alternate_greetings : []
+    const greeting = primary
+      ? routedIndex > 0 ? alternateGreetings[routedIndex - 1] : primary.character.first_message
+      : ''
+    const openingParts = [
+      story?.opening_scene ? expandStoryMacros(story.opening_scene, { ...macroBase, member: primary, character: primary?.character }) : '',
+      greeting ? expandStoryMacros(greeting, { ...macroBase, member: primary, character: primary.character }) : '',
+    ].map(value => String(value ?? '').trim()).filter(Boolean)
+    if (openingParts.length) {
+      const participantIds = greeting && primary ? [primary.character_id] : []
       this.db.appendEvent({
-        conversationId, branchId, type: 'assistant.message', actorId: member.character_id,
-        payload: { content: member.character.first_message, metadata: { opening: true, character_id: member.character_id } },
+        conversationId, branchId, type: 'assistant.message', actorId: 'narrator',
+        payload: {
+          content: openingParts.join('\n\n'),
+          metadata: { opening: true, participant_ids: participantIds, greeting_index: routedIndex },
+        },
       })
     }
   }
@@ -616,7 +636,7 @@ export class TavernRepository {
   }
 
   setFavorite(entityType, entityId, favorite = true) {
-    assert(['character', 'story', 'conversation'].includes(entityType), 'Unsupported favorite type')
+    assert(['story', 'conversation'].includes(entityType), 'Unsupported favorite type')
     if (favorite) {
       this.db.raw.prepare('INSERT OR IGNORE INTO favorites(entity_type, entity_id, created_at) VALUES (?, ?, ?)')
         .run(entityType, entityId, nowIso())
@@ -647,8 +667,6 @@ export class TavernRepository {
     })
     return {
       continue: recent,
-      characters: this.listCharacters().map(item => ({ ...item, favorite: favoriteKeys.has(`character:${item.id}`) }))
-        .sort((a, b) => Number(b.favorite) - Number(a.favorite) || b.updated_at.localeCompare(a.updated_at)).slice(0, 8),
       stories: this.listStories().map(item => ({ ...item, favorite: favoriteKeys.has(`story:${item.id}`), playthroughs: this.listPlaythroughs(item.id) }))
         .sort((a, b) => Number(b.favorite) - Number(a.favorite) || b.updated_at.localeCompare(a.updated_at)).slice(0, 8),
     }

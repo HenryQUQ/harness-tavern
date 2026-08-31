@@ -1,4 +1,5 @@
 import { assert, cleanText, json, nowIso, randomToken, sha256Base64Url, stableStringify } from '../util.js'
+import { applyDisplayTransforms } from '../runtime/story-runtime.js'
 
 function parseDays(value) {
   const number = Number(value)
@@ -10,16 +11,19 @@ function publicConversationSnapshot(repository, conversationId) {
   const conversation = repository.getConversation(conversationId)
   const events = repository.events(conversationId)
   const story = conversation.story_id ? repository.getStory(conversation.story_id) : null
-  const characters = repository.listConversationCast(conversation.id).map(member => ({
+  const cast = repository.listConversationCast(conversation.id)
+  const castIds = new Set(cast.map(member => member.character.id))
+  const characters = cast.map(member => ({
     id: member.character.id,
     name: member.character.name,
     tagline: member.character.tagline,
     avatar_url: member.character.avatar_url,
   }))
   const messages = events.filter(event => ['user.message', 'assistant.message', 'narrator.message'].includes(event.type)).map(event => ({
-    role: event.type === 'user.message' ? 'user' : event.type === 'narrator.message' ? 'narrator' : 'assistant',
+    role: event.type === 'user.message' ? 'user' : event.type === 'narrator.message' || event.actor_id === 'narrator' ? 'narrator' : 'assistant',
     actor_id: event.actor_id,
     content: event.payload.content ?? '',
+    participant_ids: [...new Set(event.payload.metadata?.participant_ids ?? [])].filter(participantId => castIds.has(participantId)),
     created_at: event.created_at,
   }))
   return {
@@ -27,7 +31,7 @@ function publicConversationSnapshot(repository, conversationId) {
     title: conversation.title,
     story: story ? { id: story.id, title: story.title, hook: story.hook, cover_url: story.cover_url, genre: story.genre, tone: story.tone } : null,
     characters,
-    messages: messages.slice(-30),
+    messages: (story ? applyDisplayTransforms(story, messages, cast) : messages).slice(-30),
     timeline_label: repository.listBranches(conversationId).find(branch => branch.id === conversation.current_branch_id)?.label || 'Main timeline',
   }
 }
@@ -43,19 +47,13 @@ export class ShareLinkService {
   create({ resource_type, resource_id, scope = 'preview', expires_in_days = 30 } = {}) {
     const resourceType = cleanText(resource_type, 40)
     const resourceId = cleanText(resource_id, 200)
-    assert(['character', 'story', 'conversation'].includes(resourceType), 'resource_type must be character, story, or conversation')
+    assert(['story', 'conversation'].includes(resourceType), 'resource_type must be story or conversation')
     assert(resourceId, 'resource_id is required')
     const normalizedScope = scope === 'remix' ? 'remix' : 'preview'
     assert(resourceType !== 'conversation' || normalizedScope === 'preview', 'Playthrough shares are preview-only')
     let snapshot
     let title
-    if (resourceType === 'character') {
-      const character = this.repository.getCharacter(resourceId)
-      title = character.name
-      snapshot = normalizedScope === 'remix'
-        ? this.packs.exportCharacter(resourceId)
-        : { kind: 'character-preview', character: { id: character.id, name: character.name, tagline: character.tagline, description: character.description, personality: character.personality, avatar_url: character.avatar_url, tags: character.tags, content_warnings: character.content_warnings, first_message: character.first_message } }
-    } else if (resourceType === 'story') {
+    if (resourceType === 'story') {
       const story = this.repository.getStory(resourceId)
       title = story.title
       snapshot = normalizedScope === 'remix'

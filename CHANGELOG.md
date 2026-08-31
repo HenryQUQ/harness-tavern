@@ -4,26 +4,71 @@ All notable changes are documented here. The format follows Keep a Changelog, an
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-31
+
 ### Added
 
-- A discoverable Library content-type contract and strict `/api/library/items` endpoint for explicit Character and Story structures.
-- Read-only compatibility access for legacy generated drafts and an ADR defining the framework-first authoring boundary.
-- Complete Character and Story workbenches covering authored identity, voice, private intent, Cast, Lore, Markdown Scenes, causal State, Actions, Agendas, visibility, compatibility data, and raw canonical source access.
-- Source-aware optimistic conflict protection so browser edits cannot silently overwrite newer Character resources or Story files.
-- A documentation home, ordinary-user getting-started guide, and comprehensive developer guide covering the project's causal construction principles, repository structure, contribution workflow, and change-specific validation expectations.
-- Repository checks for broken local links in Markdown documentation.
+- An isolated Character Runtime phase between player Action resolution and Storyteller composition. Each selected Character now receives only its own private file, actor-visible state, observations, memories, and Agendas.
+- Event-sourced Character state for perceived events, beliefs, emotion, relationship stances, current intent, disclosure history, public cues, and participation; state follows timeline forks and resumes safely after partial model failure.
+- Authorable Character mind profiles for initiative, initial presence, drives, fears, values, mannerisms, and secret-reveal policy, stored in portable Story Cast metadata.
+- Structured Scene Blocks for narration, Character action, and Character dialogue, with speaker authorization and a player-facing living-stage Cast presence line.
+- Runtime and API diagnostics for isolated actor plans, plus tests for private-context separation, invalid speaker rejection, resumable parallel planning, public-state sanitization, and branch isolation.
+- Contract repair for malformed Character plans and Storyteller Scene Blocks. One corrective provider call is attempted before a conservative no-action Character plan or verified-Observation narration is persisted.
 
 ### Changed
 
-- Library-first **New** and **Import** actions now replace the separate creative dashboard. Blank Character/Story flows add only the minimum valid structure and immediately open the complete editor.
-- Built-in extensions provide presentation foundations but no creative templates or fixed composer prompts; optional extension blueprints never drive core creation implicitly.
-- Story Cast editing and persistence no longer applies the former arbitrary 20-member storage ceiling.
-- Rebuilt the English and Chinese READMEs as approachable product introductions with a guided first-run path, migration and ownership explanations, honest deployment boundaries, and audience-based documentation navigation.
-- Expanded the GitHub contribution entrypoint to connect architectural invariants with practical branch, test, security, and pull-request requirements.
+- The Director now interprets only player Actions and identifies relevant Cast candidates; it no longer reads private Character files or decides Character Agendas.
+- Character runtimes, rather than the Director or Storyteller, decide whether each selected Character acts, speaks, reacts, observes, or deliberately remains silent.
+- The Storyteller receives filtered Character Performance Briefs instead of complete private Character files and produces one coherent JSON Scene Block beat.
+- Narration safety now also rejects verbatim disclosure of private Character source text that the Character did not authorize.
+- DeepSeek narration retries disable strict response formatting after an empty JSON response while Character and control phases keep their structured-output contract.
+
+## [0.15.0] - 2026-08-30
+
+### Added
+
+- One coherent Storyteller narration pass per player input, with Cast members treated as optional scene participants instead of a mandatory reply queue.
+- Player-autonomy validation discards narration that invents unrequested player movement, interaction, speech, thoughts, feelings, memories, or decisions; one corrected retry is allowed before a verified-observation fallback.
+- Rolling continuity summaries, calibrated token estimates, bounded recent history, and a persisted deterministic multilingual retrieval index for Story source and older-message recall.
+- Advanced SillyTavern World Info semantics including recursion, selective matching, groups, probability, timing, insertion, and Character filters; safe Regex placement/depth/edit behavior; and declarative import of plain manual Quick Replies.
+- Visual Runtime editors for Lore activation, causality, transforms, and prompt layers, plus a no-model runtime debugger, connection diagnostics, aggregate usage, and retrieval health.
+- Conversation-scoped attachments with strict type/size limits, immutable sent history, extracted text, provider capability gating, and native OpenAI-compatible/OpenRouter, Anthropic, and Gemini image payloads.
+- Browser voice dictation and Storyteller read-aloud controls.
+- Automated 2,000-message context performance/recall coverage and attachment/provider protocol tests.
+
+### Changed
+
+- Starting a Playthrough now requires an explicitly configured AI service; content authoring, import, and library management remain provider-independent.
+- Database migration 10 transfers Conversations using the retired built-in model to the earliest enabled real connection when available.
+- Database migration 13 removes legacy zero-cost mock usage rows so diagnostics no longer advertise a retired built-in model.
+- Default history is bounded to recent messages plus relevant recall and durable continuity; explicit whole-block context budgets remain available.
 
 ### Removed
 
-- The opinionated brief-to-draft generator, generated draft publish state machine, and built-in Story-to-template workflow. Retired HTTP routes return 410 without deleting existing draft rows.
+- The built-in demo model, its product adapter, seeded connection, model-list entries, and UI-specific Demo state.
+
+## [0.14.0] - 2026-08-30
+
+### Added
+
+- A Story-only product model: every playable experience is a Story that can be narrator-only, single-cast, or multi-cast.
+- Inline Cast authoring for complete Character Card fields, prompt layers, example dialogue, alternate greetings, private context, goals, boundaries, metadata, and ecosystem extensions.
+- A safe declarative Story Runtime with actor-scoped transforms across user input, model input, model output, and display; macro expansion; selective World Info activation; and prompt automations.
+- Database migration 9, which wraps storyless Conversations and orphan Character Cards in Stories, creates missing Playthroughs, and preserves imported Lore and regex rules idempotently.
+- Story schemas, runtime tests, migration tests, and a Story-only executable user journey covering creation, play, portability, and sharing.
+
+### Changed
+
+- Library, Home, Chats, onboarding, sharing, import, and creation now expose Stories and Personas instead of a separate Character product.
+- Direct SillyTavern Character Cards become single-cast Stories; Groups become ensemble Stories; World Info becomes narrator-only Stories; imported chats attach to Story Playthroughs.
+- Character Card system prompts, depth prompts, examples, alternate greetings, embedded World Info, talkativeness, and extension payloads are preserved and used by runtime context assembly.
+- Tavern packs and old Harness Tavern data normalize to Story-owned Cast while retaining Actor resources as an internal compatibility and serialization detail.
+- Story Runtime is part of canonical source comparison, import/export, public summaries, and the complete Story workspace.
+
+### Removed
+
+- Top-level Character browsing, creation, profiles, favorites, sharing, editing, and direct-chat entry points from the browser and public bootstrap.
+- Public direct Conversation creation; clients now start a Story Playthrough.
 
 ## [0.13.0] - 2026-08-30
 
@@ -51,6 +96,9 @@ All notable changes are documented here. The format follows Keep a Changelog, an
 
 - Tavern-first character chat, ensemble stories, timelines, creator workflows, portable sharing, declarative extensions, provider adapters, encrypted credentials, and local SQLite persistence.
 
-[Unreleased]: https://github.com/HenryQUQ/harness-tavern/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/HenryQUQ/harness-tavern/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/HenryQUQ/harness-tavern/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/HenryQUQ/harness-tavern/releases/tag/v0.15.0
+[0.14.0]: https://github.com/HenryQUQ/harness-tavern/releases/tag/v0.14.0
 [0.13.0]: https://github.com/HenryQUQ/harness-tavern/releases/tag/v0.13.0
 [0.12.0]: https://github.com/HenryQUQ/harness-tavern/releases/tag/v0.12.0

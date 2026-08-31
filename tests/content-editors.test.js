@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { jsonRequest, testApp } from './helpers.js'
 import { SAMPLE_IDS } from '../src/domain/seed.js'
 
-await test('every Character has a complete creator editor contract with source-aware conflict protection', async t => {
+await test('the internal Actor compatibility contract keeps source-aware conflict protection', async t => {
   const { app, baseUrl } = await testApp(t)
   const player = await jsonRequest(baseUrl, `/api/characters/${SAMPLE_IDS.mira}`)
   assert.equal(player.response.status, 200)
@@ -172,7 +172,7 @@ await test('visual Story editing keeps the complete cast without an arbitrary tw
   assert.equal(app.storySources.get(SAMPLE_IDS.story).source.cast.length, 24)
 })
 
-await test('standalone Characters and database-only Stories can enter the same complete editors', async t => {
+await test('legacy standalone Actors remain recoverable while database-only Stories materialize sources', async t => {
   const { app, baseUrl } = await testApp(t)
   const character = app.repository.createCharacter({
     name: 'Standalone editable Character',
@@ -205,14 +205,14 @@ await test('standalone Characters and database-only Stories can enter the same c
   assert.equal(openedStory.body.story.cast[0].character_id, character.id)
 })
 
-await test('Library profiles expose responsive complete Character and Story workbenches', () => {
+await test('the Library exposes one responsive Story workspace with inline Cast editing', () => {
   const browser = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8')
-  assert.match(browser, /openCharacterEditor\(character\.id\)/)
   assert.match(browser, /openStoryEditor\(story\.id\)/)
-  assert.match(browser, /\/api\/creator\/characters\/\$\{encodeURIComponent\(characterId\)\}/)
   assert.match(browser, /\/api\/creator\/stories\/\$\{encodeURIComponent\(storyId\)\}/)
-  for (const section of ['Identity', 'Intent & privacy', 'Cast', 'World & lore', 'Scenes', 'Causality', 'Advanced']) assert.ok(browser.includes(section))
+  assert.doesNotMatch(browser, /function openCharacter(?:Profile|Editor)/)
+  assert.doesNotMatch(browser, /function startCharacterChat/)
+  for (const section of ['Story', 'Cast', 'World & lore', 'Scenes', 'Causality', 'Runtime', 'Advanced']) assert.match(browser, new RegExp(section.replace(/[&]/g, '\\&')))
   assert.match(styles, /\.modal-workspace/)
   assert.match(styles, /@media \(max-width: 720px\)/)
   assert.match(browser, /role: 'tablist'/)

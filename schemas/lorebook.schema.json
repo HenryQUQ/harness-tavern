@@ -65,6 +65,75 @@
             "maxLength": 100
           }
         },
+        "secondary_keywords": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "selective": {
+          "type": "boolean"
+        },
+        "selective_logic": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "maximum": 3 },
+            { "enum": ["and_any", "not_all", "not_any", "and_all"] }
+          ]
+        },
+        "scan_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "case_sensitive": {
+          "type": "boolean"
+        },
+        "match_whole_words": {
+          "type": "boolean"
+        },
+        "use_probability": {
+          "type": "boolean"
+        },
+        "probability": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "group": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "group_override": {
+          "type": "boolean"
+        },
+        "group_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "sticky": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "cooldown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "delay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "prevent_recursion": {
+          "type": "boolean"
+        },
+        "exclude_recursion": {
+          "type": "boolean"
+        },
         "visibility": {
           "enum": [
             "public",
@@ -80,6 +149,28 @@
         },
         "position": {
           "type": "integer"
+        },
+        "order": {
+          "type": "number"
+        },
+        "insertion": {
+          "type": "object",
+          "properties": {
+            "position": {},
+            "order": { "type": "number" },
+            "depth": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "role": { "enum": ["system", "user", "assistant"] }
+          },
+          "additionalProperties": false
+        },
+        "character_filter": {
+          "type": "object",
+          "properties": {
+            "names": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 160 } },
+            "tags": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 100 } },
+            "exclude": { "type": "boolean" }
+          },
+          "additionalProperties": false
         },
         "extensions": {
           "type": "object"

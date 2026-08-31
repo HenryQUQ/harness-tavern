@@ -2,22 +2,13 @@ import { assert, plainObject } from '../util.js'
 
 const CONTENT_TYPES = Object.freeze([
   Object.freeze({
-    kind: 'character',
-    label: 'Character',
-    creation_mode: 'explicit',
-    generated: false,
-    required_fields: ['name'],
-    editable_model: 'character-card',
-    portable_formats: ['harness-tavern-pack', 'chara_card_v2', 'chara_card_v3'],
-  }),
-  Object.freeze({
     kind: 'story',
     label: 'Story',
     creation_mode: 'explicit',
     generated: false,
-    required_fields: ['title', 'cast'],
+    required_fields: ['title'],
     editable_model: 'harness-tavern-story/v2',
-    portable_formats: ['harness-tavern-story/v2', 'harness-tavern-pack'],
+    portable_formats: ['harness-tavern-story/v2', 'harness-tavern-pack', 'chara_card_v2', 'chara_card_v3'],
   }),
 ])
 
@@ -43,10 +34,6 @@ export class LibraryService {
     const definition = CONTENT_TYPES.find(item => item.kind === input.kind)
     assert(definition, `Unsupported Library content kind: ${input.kind ?? ''}`, 400, 'unsupported_content_kind')
     const content = explicitContent(input)
-    if (definition.kind === 'character') {
-      const item = this.repository.createCharacter(content)
-      return { kind: definition.kind, item, source: null }
-    }
     const structuralContent = {
       ...content,
       ...Array.isArray(content.cast) ? {

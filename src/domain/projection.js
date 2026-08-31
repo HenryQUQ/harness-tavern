@@ -14,6 +14,7 @@ export function emptyProjection() {
     actions: [],
     receipts: [],
     observations: [],
+    characterStates: {},
     scene: null,
     summary: '',
     turnCount: 0,
@@ -134,6 +135,63 @@ function updateAction(state, actionId, values) {
   if (action) Object.assign(action, deepClone(values))
 }
 
+function boundedRuntimeList(current, additions, maximum, identity) {
+  const output = Array.isArray(current) ? current.map(deepClone) : []
+  for (const value of Array.isArray(additions) ? additions : []) {
+    const key = identity(value)
+    const index = output.findIndex(item => identity(item) === key)
+    if (index >= 0) output[index] = deepClone(value)
+    else output.push(deepClone(value))
+  }
+  return output.slice(-maximum)
+}
+
+function applyCharacterDeliberation(state, event) {
+  const payload = event.payload ?? {}
+  const characterId = String(payload.character_id ?? event.actor_id ?? '')
+  if (!characterId) return
+  const current = state.characterStates[characterId] ?? {
+    character_id: characterId,
+    presence: 'present',
+    initiative: 'balanced',
+    perceived_event_ids: [],
+    beliefs: [],
+    emotional_state: {},
+    relationship_stances: {},
+    disclosures: [],
+  }
+  current.perceived_event_ids = boundedRuntimeList(
+    current.perceived_event_ids,
+    payload.perceived_event_ids,
+    160,
+    value => String(value),
+  )
+  current.beliefs = boundedRuntimeList(
+    current.beliefs,
+    payload.belief_updates,
+    64,
+    value => String(value?.id ?? `${value?.subject ?? ''}:${value?.claim ?? ''}`).toLocaleLowerCase(),
+  )
+  current.emotional_state = { ...(current.emotional_state ?? {}), ...deepClone(payload.emotional_state ?? {}) }
+  const stances = { ...(current.relationship_stances ?? {}) }
+  for (const shift of payload.relationship_shifts ?? []) {
+    const targetId = String(shift.target_id ?? '')
+    const dimension = String(shift.dimension ?? 'trust')
+    if (!targetId || !dimension) continue
+    const target = { ...(stances[targetId] ?? {}) }
+    target[dimension] = Math.max(-1, Math.min(1, Number(target[dimension] ?? 0) + Number(shift.delta ?? 0)))
+    stances[targetId] = target
+  }
+  current.relationship_stances = stances
+  current.disclosures = boundedRuntimeList(current.disclosures, payload.disclosures, 80, value => String(value))
+  current.current_intent = payload.intent ?? current.current_intent ?? ''
+  current.last_participation = payload.participation ?? current.last_participation ?? 'observe'
+  current.last_public_cue = payload.public_cue ?? ''
+  current.last_turn_uid = payload.turn_uid ?? null
+  current.last_active_at = event.created_at
+  state.characterStates[characterId] = current
+}
+
 export function visibleObservations(projection, actorId = 'user', { includeDirector = false } = {}) {
   return projection.observations.filter(observation => {
     const audience = Array.isArray(observation.audience) ? observation.audience : [observation.audience ?? 'public']
@@ -213,6 +271,16 @@ export function reduceEvents(events, initialState = {}) {
       }
       case 'observation.created':
         state.observations.push({ event_id: event.id, ...deepClone(event.payload) })
+        break
+      case 'character.runtime.initialized': {
+        const characterId = String(event.payload.character_id ?? event.actor_id ?? '')
+        if (characterId && !state.characterStates[characterId]) {
+          state.characterStates[characterId] = deepClone(event.payload)
+        }
+        break
+      }
+      case 'character.deliberated':
+        applyCharacterDeliberation(state, event)
         break
       case 'agenda.created':
         state.agendas[event.payload.id] = { status: 'active', evaluation_count: 0, ...deepClone(event.payload) }

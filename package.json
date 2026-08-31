@@ -1,9 +1,9 @@
 {
   "name": "harness-tavern",
-  "version": "0.13.0",
+  "version": "0.16.0",
   "private": true,
   "type": "module",
-  "description": "A nontechnical, shareable and extensible Tavern for persistent character chat and roleplay.",
+  "description": "A local-first Tavern for portable multi-character Stories with bundled lore, prompts, transforms, and causal runtime.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,7 +14,7 @@
     "url": "https://github.com/HenryQUQ/harness-tavern/issues"
   },
   "keywords": [
-    "character-chat",
+    "story-runtime",
     "roleplay",
     "llm",
     "sillytavern",

@@ -4,19 +4,33 @@ Harness Tavern is designed from the user’s intention outward, not from databas
 
 ## Experience promise
 
-A player should feel that they are returning to the same Character or Story. An author should see a clear, editable, portable content model without being forced into the core team’s preferred creative process.
+A player returns to the same Story, with the same Cast, world, private knowledge, unresolved intent, and causal history. An author works on one complete, editable, portable package instead of assembling a playable experience from unrelated top-level records.
 
 The visible product language is:
 
 ```text
-Character · Story · Persona · Playthrough · Timeline · Journal · Share
+Story · Cast · Persona · Playthrough · Timeline · Journal · Share
 ```
 
-The following remain implementation concepts:
+The following remain implementation or compatibility concepts:
 
 ```text
-Provider · routing · event projection · Action resolution · context assembly · Control Plan
+Actor record · Character table · Provider · event projection · Action resolution · context assembly · Control Plan
 ```
+
+## One playable aggregate
+
+A **Story** is the unit users discover, create, import, edit, play, share, and version. It may contain:
+
+- no Cast for narrator-only play;
+- one Cast member for a traditional Character Card experience;
+- any number of Cast members for an ensemble;
+- Story Lore and actor-owned embedded Lore;
+- Story and actor prompt layers, example dialogue, and alternate openings;
+- safe text transforms and prompt automations;
+- Scenes, initial state, typed Actions, Agendas, and visibility rules.
+
+There is no separate Character destination in Home, Chats, Library, onboarding, favorites, sharing, or creation. Actors are edited inline in **Story workspace → Cast**. Internal Actor records exist so stable source mappings, causal ownership, and SillyTavern compatibility remain reliable; they are not an independent product lifecycle.
 
 ## Surfaces
 
@@ -24,43 +38,40 @@ Provider · routing · event projection · Action resolution · context assembly
 
 Primary navigation:
 
-- **Home** — continue and discover;
-- **Chats** — active relationships and Story Playthroughs;
-- **Library** — Characters, Stories, Personas, New, and Import;
+- **Home** — continue Playthroughs and discover Stories;
+- **Chats** — Story Playthroughs grouped by Story identity;
+- **Library** — Stories, Personas, New Story, and Import;
 - **Settings** — profile, AI connections, sharing, extensions, appearance, and advanced options.
 
-There is no separate core **Create** product. Adding an item is a Library operation: choose a blank standard structure or import a standard file. This keeps content identity, editing, portability, and lifecycle in one place.
+Inside a Story, prose remains the visual focus. A causal inspector exposes player-safe Facts, visible Action receipts, public Intent, and Timeline/context diagnostics. It collapses to a drawer on small screens.
 
-Inside a Story, prose remains the visual focus. A causal inspector beside it exposes player-safe Facts, visible Action receipts, public Intent, and Timeline/context diagnostics. It collapses to a drawer on small screens.
-
-Chats use one continuous workspace rather than a gallery of unrelated cards. A compact rail groups every Conversation first by **Character** or **Story**, then by the specific Character, ensemble, or Story identity. The same rail remains available while a desktop Conversation is open, so switching context never requires returning to a separate index. On small screens the rail becomes the complete Chats view and yields the screen to the active Conversation.
+Chats use one continuous workspace. A compact rail groups every Conversation by Story, and the same rail remains available while a desktop Conversation is open. On small screens the rail becomes the complete Chats view and yields the screen to the active Conversation.
 
 ### Authoring surface
 
-Authoring begins from an existing Library item or **Library → New**. Advanced private information is never mixed into the player Journal.
+Authoring begins from a Story in the Library, **New Story**, or **Import as Story**. The Story workspace contains:
 
-The author can:
-
-- establish a blank Character identity or blank Story with an explicit Cast;
-- edit the complete standard content model;
-- use the same model for narrator-only, single-Character, and multi-Character Stories;
-- play-test without copying authored content into chat as truth;
-- share a player-safe preview or an editable/playable portable file;
-- edit a canonical Story source directly with ordinary file and Git tools.
+- **Story** — identity, premise, player role, opening, visibility, and presentation;
+- **Cast** — complete inline Actor fields, role, public/private context, prompt layers, examples, alternate greetings, goals, secrets, boundaries, isolated-mind initiative/drives/fears/values/mannerisms/reveal policy, metadata, and extensions;
+- **World & lore** — rules and audience-scoped, keyword-activated Lore;
+- **Scenes** — ordered Markdown Scenes and active Cast;
+- **Causality** — initial state, world schema, typed Actions, Agendas, state visibility, and prompt graph;
+- **Runtime** — safe scoped transforms and prompt automations;
+- **Advanced** — author notes, share policy, metadata, and canonical source access.
 
 The core does not ask for a creative brief, recommend genre or relationships, generate a draft, or publish a generated result. Those are possible extension-level product choices, not universal framework responsibilities.
 
 ### Public share surface
 
-`/share.html` is independent from the private application bootstrap. It receives only a sanitized snapshot and cannot request author-private content.
+`/share.html` is independent from the private application bootstrap. It receives only a sanitized Story or Playthrough snapshot and cannot request author-private content.
 
 ## First-use journey
 
 1. Ask what the Tavern should call the user.
-2. Offer a Character, a Story, or the Library.
+2. Offer a Story or the Story Library.
 3. Route directly to useful content.
-4. Use the built-in model automatically.
-5. Suggest external AI connections only after value has been demonstrated.
+4. Let the user inspect, author, or import content without a provider.
+5. Require an explicit AI connection before starting a Playthrough; never silently substitute a bundled model.
 
 The onboarding setting is stored server-side, while the chosen language follows the user profile.
 
@@ -68,67 +79,68 @@ The onboarding setting is stored server-side, while the chosen language follows 
 
 ### Default player layer
 
-- names, portraits, and Story hooks;
-- natural-language Scene and relationship descriptions;
-- continue/start actions;
-- blank/import Library actions;
+- Story hooks, Cast portraits, and natural-language Scene descriptions;
+- continue/start actions and alternate opening selection;
+- New Story and Import as Story;
 - safe sharing.
 
 ### Optional advanced player layer
 
-- reasoning strength;
-- response length;
-- Character initiative;
+- reasoning strength and response length;
+- Cast initiative and group pacing;
 - model selection and provider-compatible sampling controls.
 
-The per-Conversation AI panel follows progressive disclosure. Response preset, thinking strength, response length, initiative, and group pacing are always visible together. Connection/model choice, model input assembly, sampling, and provider-specific overrides remain in labeled disclosure rows. Saving applies the complete form to the next reply without changing the causal runtime type.
+The per-Conversation AI panel follows progressive disclosure. Common response controls stay together; connection/model choice, model input assembly, sampling, and provider-specific overrides remain in labeled disclosure rows. Saving applies the complete form to the next reply without changing the causal runtime type.
 
 ### Author-only layer
 
-- private Character knowledge;
+- private Cast context and secrets;
 - Director-only Lore;
-- author notes;
-- raw event and model diagnostics;
-- complete editable source and export.
+- author notes and raw compatibility extensions;
+- causal definitions, diagnostics, and complete editable source.
 
 ## Domain separation
 
-### Character and Story
+### Story and Cast
 
-Character and Story are durable authored objects. A Story contains explicit Cast references, world rules, Scenes, Lore, player role, opening, and causal definitions. The Story source is authoritative for authored content.
+A Story is the durable authored aggregate. Cast membership records which Actors participate and stores Story-specific role and public/private context. Actor content belongs to the Story source even though the compiled SQLite projection uses internal Actor rows.
+
+At runtime, the Director sees public Cast summaries and chooses relevant candidates. Each selected Actor then runs in an isolated Character context and persists its own perceptions, beliefs, emotional state, relationship stance, intent, and disclosure history. Only its filtered Performance Brief reaches the Storyteller. The player still receives one scene, rendered as identity-preserving narration, action, and dialogue blocks; Character depth does not become a reply queue.
+
+### Persona
+
+The player’s reusable identity. Selecting a Persona for a Playthrough does not modify the Story source.
 
 ### Playthrough
 
-One user’s entry into a Story with a selected Persona and player role. Its facts and history do not rewrite the Story source.
+One user’s entry into a Story with a selected Persona, player role, opening route, and causal history. Its facts never rewrite the Story source.
 
 ### Timeline
 
-A branch inside a Playthrough. A new Timeline can inherit history up to an event boundary but cannot see future events from its parent.
+A branch inside a Playthrough. A new Timeline inherits history up to an event boundary but cannot see future events from its parent.
 
 ### Conversation
 
-The player-facing narrative projection of an append-only event stream. Character-only chats use the same runtime without requiring a Story. Conversation text is never the authoritative world state.
+The player-facing narrative projection of an append-only event stream. Every new Conversation belongs to a Story Playthrough. Conversation text is never the authoritative world state.
 
-### Control Loop
+### Story Runtime and Control Loop
 
-One durable command moves through interpretation, deterministic Action resolution, actor-scoped Observation, and narration. Provider failure suspends the loop at its current phase; resume does not duplicate already committed effects.
+The Story Runtime activates Lore, expands supported macros, applies safe scoped text transforms, and injects declarative automations around the causal pipeline. One durable command then moves through interpretation, deterministic Action resolution, actor-scoped Observation, and narration. Provider failure suspends the loop at its current phase; resume does not duplicate already committed effects.
 
 ## Explicit Library lifecycle
 
 The universal core flow is:
 
 ```text
-blank standard structure or imported file
-→ complete editable content
+blank Story or imported content
+→ complete editable Story with owned Cast and Runtime
 → validated durable Library item
-→ chat or Playthrough
+→ Playthrough
 ```
 
-Creating a blank Character asks only for a name. Creating a blank Story asks for a title and one or more existing Character references. Required structural fields can receive empty defaults, but no authored meaning is inferred. There is no generated draft or separate publish state.
+Creating a blank Story asks only for a title. An optional first Cast member can be entered inline, or the Story can remain narrator-only. Required structural fields receive empty defaults, but no authored meaning is inferred. A direct SillyTavern Character Card is imported as a single-cast Story, not as a separate Library type.
 
-An extension may visibly provide an opinionated assistant, transform, or blueprint. Its result must still cross the same explicit Character/Story validation boundary. Installing a blueprint does not change core creation behavior.
-
-Older guided-creation drafts are preserved through a read-only compatibility boundary so upgrades do not destroy user data.
+An extension may visibly provide an opinionated assistant, transform, or blueprint. Its result must still cross the same explicit Story validation boundary. Installing a blueprint does not change core creation behavior. Older guided-creation drafts are preserved through a read-only compatibility boundary so upgrades do not destroy user data.
 
 ## Journal projection
 
@@ -147,14 +159,13 @@ The author inspector uses a separate endpoint and authorization boundary.
 
 Automated tests protect these rules:
 
-- primary navigation contains no Create, Models, Provider, State, or Agent Mode destination;
-- every Conversation bootstrap summary carries a public Character/Story grouping identity without private Cast context;
-- the Chats rail groups Character and Story Conversations and keeps the active Conversation visible;
-- common per-Conversation response controls are available before connection and sampling details;
-- onboarding does not require model configuration;
-- Library content kinds declare `creation_mode: explicit` and `generated: false`;
-- blank creation leaves creative fields empty and produces a standard editable object;
-- old fixed-brief generation routes remain retired;
+- primary navigation has no Character, Create, Models, Provider, State, or Agent Mode destination;
+- bootstrap and Home omit top-level Character collections;
+- Library advertises only Story as playable content and Persona as player identity;
+- every Conversation has a Story grouping identity and a Playthrough;
+- the Story workspace edits complete Cast and Runtime in place;
+- direct Character Cards normalize to single-cast Stories;
+- blank creation can produce a narrator-only Story and never invents creative fields;
 - default response depth is Automatic;
 - raw JSON state is not a primary player action;
 - public shares omit private and Director-only content;
@@ -162,5 +173,5 @@ Automated tests protect these rules:
 - impossible Actions produce visible rejection receipts without changing facts;
 - provider failures preserve Commands for idempotent resume;
 - import always supports preview before mutation;
-- declarative extensions cannot contain executable fields or silently drive core generation;
+- declarative Runtime and extensions cannot execute imported code;
 - the bundled sample is an editable Story v2 project with typed Actions and persistent Agendas, not a static mockup.

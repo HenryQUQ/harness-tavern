@@ -20,7 +20,7 @@ export const DEFAULT_GENERATION = Object.freeze({
 
 export const DEFAULT_PROMPT = Object.freeze({
   custom_instructions: '',
-  history_messages: null,
+  history_messages: 80,
   context_budget_tokens: null,
 })
 

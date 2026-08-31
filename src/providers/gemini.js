@@ -3,12 +3,15 @@ import { thinkingPlan } from '../runtime/thinking.js'
 import { geminiGenerationParameters, presetBodyOverlay, safeBodyOverlay } from './generation-options.js'
 import { json } from '../util.js'
 
-function transformMessages(messages) {
+function transformMessages(messages, attachments = []) {
   const system = messages.filter(message => message.role === 'system').map(message => message.content).join('\n\n')
   const contents = messages.filter(message => message.role !== 'system').map(message => ({
     role: message.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: String(message.content ?? '') }],
   }))
+  const images = attachments.filter(item => item.delivery === 'inline' && item.mime_type?.startsWith('image/') && item.data_base64)
+  const targetIndex = contents.findLastIndex(message => message.role === 'user')
+  if (images.length && targetIndex >= 0) contents[targetIndex].parts.push(...images.map(item => ({ inlineData: { mimeType: item.mime_type, data: item.data_base64 } })))
   return { system, contents }
 }
 
@@ -17,7 +20,7 @@ export class GeminiAdapter {
 
   async complete(request, connection, credential, signal) {
     const plan = thinkingPlan(request.thinkingIntensity, request.maxOutputTokens)
-    const prompt = transformMessages(request.messages)
+    const prompt = transformMessages(request.messages, request.attachments)
     const connectionConfig = json(connection.config_json ?? connection.config, {}) ?? {}
     const connectionOptions = safeBodyOverlay(connectionConfig.extra_body)
     const presetOptions = presetBodyOverlay(request)
