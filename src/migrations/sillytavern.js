@@ -1,6 +1,9 @@
 import { unzipSync, strFromU8 } from 'fflate'
 import { cardToCharacter } from '../sharing/pack.js'
-import { assert, cleanText, id, json, nowIso, plainObject, sha256Hex, stableStringify, uniqueStrings } from '../util.js'
+import { characterCardTransforms } from '../runtime/story-runtime.js'
+import { loreCompatibilityFields } from '../domain/lore.js'
+import { EXTENSION_FORMAT, EXTENSION_VERSION } from '../version.js'
+import { assert, cleanText, id, json, nowIso, plainObject, sha256Hex, slugify, stableStringify, uniqueStrings } from '../util.js'
 
 const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 const MAX_FILE_BYTES = 24 * 1024 * 1024
@@ -195,7 +198,7 @@ function worldEntries(world, sourcePath) {
     selective: Boolean(entry.selective),
     enabled: entry.disable !== true && entry.enabled !== false,
     visibility: 'public',
-    insertion: { position: entry.position ?? null, order: entry.order ?? null, depth: entry.depth ?? null },
+    ...loreCompatibilityFields(entry),
     extensions: { sillytavern: { source_path: sourcePath, original: entry } },
   })).filter(entry => entry.content)
 }
@@ -251,6 +254,50 @@ function personaCandidates(settings, sourcePath) {
   })
 }
 
+function quickReplyRows(value) {
+  const rows = []
+  const seen = new Set()
+  const visit = candidate => {
+    if (!plainObject(candidate) || seen.has(candidate)) return
+    seen.add(candidate)
+    for (const key of ['qrList', 'quickReplies', 'quick_replies', 'entries']) {
+      for (const item of Array.isArray(candidate[key]) ? candidate[key] : []) {
+        if (plainObject(item) && (Object.hasOwn(item, 'message') || Object.hasOwn(item, 'prompt'))) rows.push(item)
+        else visit(item)
+      }
+    }
+    for (const key of ['sets', 'setList', 'quickReplySets']) {
+      for (const item of Array.isArray(candidate[key]) ? candidate[key] : []) visit(item)
+    }
+  }
+  visit(value)
+  return rows
+}
+
+function quickRepliesFromFile(file) {
+  const value = parseJson(file.data, file.path)
+  const quickActions = []
+  const rejected = []
+  for (const [index, row] of quickReplyRows(value).entries()) {
+    const prompt = cleanText(row.message ?? row.prompt, 3000)
+    const label = cleanText(row.label || row.title || prompt.slice(0, 60), 80) || `Quick Reply ${index + 1}`
+    const automatic = ['executeOnStartup', 'executeOnUser', 'executeOnAi', 'execute_on_startup', 'execute_on_user', 'execute_on_ai']
+      .some(key => row[key] === true)
+    const conditional = (Array.isArray(row.contextList) && row.contextList.length > 0)
+      || (Array.isArray(row.context_list) && row.context_list.length > 0)
+    const slashCommand = /(^|\n)\s*\/[a-z][\w-]*(?:\s|$)/iu.test(prompt)
+    const executableField = Object.keys(row).some(key => ['script', 'javascript', 'code', 'eval', 'module', 'entrypoint'].includes(key.toLocaleLowerCase()))
+    let reason = ''
+    if (!prompt) reason = 'empty_prompt'
+    else if (automatic) reason = 'automatic_execution_not_supported'
+    else if (conditional) reason = 'conditional_execution_requires_review'
+    else if (slashCommand || executableField) reason = 'command_or_code_not_executed'
+    if (reason) rejected.push({ label, reason })
+    else quickActions.push({ id: slugify(row.id || label || `quick-reply-${index + 1}`, `quick-reply-${index + 1}`), label, prompt })
+  }
+  return { quick_actions: quickActions, rejected }
+}
+
 function publicInventory(inventory) {
   return {
     counts: {
@@ -294,12 +341,13 @@ function migrationRow(row) {
 }
 
 export class SillyTavernMigrationService {
-  constructor({ db, repository, sharing, generationPresets, storySources }) {
+  constructor({ db, repository, sharing, generationPresets, storySources, retrievalIndex = null }) {
     this.db = db
     this.repository = repository
     this.sharing = sharing
     this.generationPresets = generationPresets
     this.storySources = storySources
+    this.retrievalIndex = retrievalIndex
   }
 
   scan(input = {}) {
@@ -368,13 +416,24 @@ export class SillyTavernMigrationService {
           continue
         }
         const passiveType = PASSIVE_DIRECTORIES.find(directory => inDirectory(path, [directory]))
-        if (passiveType) inventory.passive.push({ source_path: path, type: passiveType, status: passiveType === 'vectors' ? 'rebuild_required' : 'not_executed' })
+        if (passiveType === 'quickreplies' && lower.endsWith('.json')) {
+          const quickReplies = quickRepliesFromFile(file)
+          inventory.passive.push({
+            source_path: path,
+            type: passiveType,
+            status: quickReplies.quick_actions.length ? 'ready_to_convert' : 'not_executed',
+            ...quickReplies,
+          })
+        } else if (passiveType) inventory.passive.push({ source_path: path, type: passiveType, status: passiveType === 'vectors' ? 'rebuild_required' : 'not_executed' })
       } catch (error) {
         warnings.push(`${path}: ${error.message}`)
       }
     }
     if (inventory.ignored_secrets.length) warnings.push('secrets.json was intentionally excluded. API keys and passwords are never migrated.')
-    if (inventory.passive.some(item => item.type === 'extensions' || item.type === 'quickreplies')) warnings.push('SillyTavern extensions and Quick Replies were inventoried but not executed; review and recreate them as declarative Tavern actions.')
+    const convertibleQuickReplies = inventory.passive.reduce((count, item) => count + (item.quick_actions?.length ?? 0), 0)
+    const rejectedQuickReplies = inventory.passive.reduce((count, item) => count + (item.rejected?.length ?? 0), 0)
+    if (convertibleQuickReplies) warnings.push(`${convertibleQuickReplies} manual plain-text Quick Replies are ready to convert into safe declarative Tavern actions when this preview is applied.`)
+    if (rejectedQuickReplies || inventory.passive.some(item => item.type === 'extensions' || (item.type === 'quickreplies' && item.status === 'not_executed'))) warnings.push('Executable, automatic, conditional, or extension-provided SillyTavern behavior is inventoried but not executed; review it before recreating equivalent declarative behavior.')
     if (inventory.passive.some(item => item.type === 'vectors')) warnings.push('Vector indexes were not copied because embeddings are model-specific; source content should be re-indexed in Harness Tavern.')
     if (!inventory.characters.length && !inventory.worlds.length && !inventory.groups.length && !inventory.chats.length && !inventory.personas.length && !inventory.presets.length) {
       warnings.push('No directly migratable SillyTavern content was detected.')
@@ -410,8 +469,30 @@ export class SillyTavernMigrationService {
     const inventory = json(row.inventory_json, {})
     const warnings = json(row.warnings_json, [])
     const characterByName = new Map(inventory.characters.map(item => [item.character.name.toLocaleLowerCase(), item.character.id]))
+    const characterById = new Map(inventory.characters.map(item => [item.character.id, item.character]))
     const worldByName = new Map(inventory.worlds.map(item => [item.name.toLocaleLowerCase(), item]))
     const stories = []
+    const soloStoryByCharacterId = new Map()
+    for (const item of inventory.characters) {
+      const character = item.character
+      const storyId = `st_story_${sha256Hex(item.source_path).slice(0, 20)}`
+      soloStoryByCharacterId.set(character.id, storyId)
+      stories.push({
+        id: storyId,
+        title: character.name,
+        hook: character.description || character.personality || 'A migrated single-cast Story.',
+        summary: character.description || '',
+        premise: character.scenario || '',
+        genre: 'Imported single-cast Story', tone: '', opening_scene: '', player_role: '', world_rules: [],
+        lore: character.extensions?.imported_lore ?? [], initial_state: {}, scenes: [], tags: ['sillytavern-import'],
+        cast: [{ character_id: character.id, role: 'Primary character', public_context: '', private_context: '', metadata: {} }],
+        metadata: { experience_kind: 'character-card', migration: { source: 'sillytavern', source_path: item.source_path } },
+        runtime: {
+          actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], automations: [],
+          transforms: characterCardTransforms(character, character.id),
+        },
+      })
+    }
     for (const world of inventory.worlds) {
       stories.push({
         id: world.id,
@@ -421,7 +502,7 @@ export class SillyTavernMigrationService {
         premise: '', genre: 'Imported world', tone: '', opening_scene: '', player_role: '', world_rules: [],
         lore: world.lore, initial_state: {}, cast: [], scenes: [], tags: ['sillytavern-import'],
         metadata: { migration: { source: 'sillytavern', source_path: world.source_path }, compatibility: { original_world: world.original } },
-        runtime: { actions: [], agendas: [], prompt_graph: {}, world_schema: {} },
+        runtime: { actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], transforms: [], automations: [] },
       })
     }
     for (const group of inventory.groups) {
@@ -435,7 +516,13 @@ export class SillyTavernMigrationService {
         tags: ['sillytavern-import', 'group'],
         cast: group.member_names.map(name => characterByName.get(name.toLocaleLowerCase())).filter(Boolean).map(characterId => ({ character_id: characterId, role: 'Group member', public_context: '', private_context: '' })),
         metadata: { migration: { source: 'sillytavern', source_path: group.source_path }, compatibility: { original_group: group.original } },
-        runtime: { actions: [], agendas: [], prompt_graph: {}, world_schema: {} },
+        runtime: {
+          actions: [], agendas: [], prompt_graph: {}, world_schema: {}, state_visibility: [], automations: [],
+          transforms: group.member_names
+            .map(name => characterById.get(characterByName.get(name.toLocaleLowerCase())))
+            .filter(Boolean)
+            .flatMap(character => characterCardTransforms(character, character.id)),
+        },
       })
     }
     const pack = {
@@ -449,6 +536,7 @@ export class SillyTavernMigrationService {
     let imported
     const presetResults = []
     const conversations = []
+    let quickReplyExtension = null
     try {
       this.db.transaction(() => {
       imported = this.sharing.import(pack, { strategy, source_name: row.source_name, sync_sources: false })
@@ -461,11 +549,25 @@ export class SillyTavernMigrationService {
           presetResults.push({ source_path: preset.source_path, status: 'preserved_only', reason: error.message })
         }
       }
+      const quickActions = inventory.passive.flatMap(item => item.quick_actions ?? [])
+      if (quickActions.length) {
+        quickReplyExtension = this.sharing.extensions.install({
+          format: EXTENSION_FORMAT,
+          format_version: EXTENSION_VERSION,
+          id: `extension_st_qr_${sha256Hex(row.source_digest).slice(0, 20)}`,
+          slug: slugify(`sillytavern-quick-replies-${row.source_name}`, 'sillytavern-quick-replies'),
+          name: `${cleanText(row.source_name, 120) || 'SillyTavern'} Quick Replies`,
+          version: '1.0.0',
+          description: 'Manual plain-text Quick Replies safely converted from a SillyTavern migration. No scripts or automatic triggers are included.',
+          publisher: 'SillyTavern migration',
+          tags: ['sillytavern-import', 'quick-replies'],
+          capabilities: { quick_actions: quickActions },
+        }, { source: `sillytavern:${sessionId}` })
+      }
       const groups = new Map(inventory.groups.map(item => [item.id, item]))
       const importedGroupIdByName = new Map(inventory.groups.map(item => [item.name.toLocaleLowerCase(), idMap[item.id]]))
       for (const chat of inventory.chats) {
         let storyId = null
-        let characterIds = []
         if (chat.group) {
           const group = [...groups.values()].find(item => item.chat_id && chat.source_path.includes(item.chat_id))
             || inventory.groups.find(item => chat.title.toLocaleLowerCase().includes(item.name.toLocaleLowerCase()))
@@ -473,16 +575,15 @@ export class SillyTavernMigrationService {
         } else {
           const sourceCharacterId = characterByName.get(chat.character_name.toLocaleLowerCase())
             || [...characterByName.entries()].find(([name]) => chat.source_path.toLocaleLowerCase().includes(name))?.[1]
-          if (sourceCharacterId && idMap[sourceCharacterId]) characterIds = [idMap[sourceCharacterId]]
+          if (sourceCharacterId) storyId = idMap[soloStoryByCharacterId.get(sourceCharacterId)] ?? null
         }
-        if (!storyId && !characterIds.length) {
+        if (!storyId) {
           warnings.push(`${chat.source_path}: chat was preserved in the migration inventory but no matching character or group was found.`)
           continue
         }
-        const conversation = this.repository.createConversation({
+        const { conversation } = this.repository.createPlaythrough({
           title: chat.title,
           story_id: storyId,
-          character_ids: characterIds,
           skip_opening: true,
           thinking_intensity: 'auto',
           prompt: { history_messages: null, context_budget_tokens: null },
@@ -515,15 +616,21 @@ export class SillyTavernMigrationService {
         this.repository.touchConversation(conversation.id, chat.messages.at(-1)?.content || '')
         conversations.push({ id: conversation.id, title: conversation.title, source_path: chat.source_path, messages: chat.messages.length })
       }
-      const mapping = { ...imported.result.id_map }
+      const mapping = { ...imported.result.id_map, ...quickReplyExtension ? { quick_reply_extension: quickReplyExtension.id } : {} }
+      const rejectedQuickReplies = inventory.passive.reduce((count, item) => count + (item.rejected?.length ?? 0), 0)
       const result = {
         characters: imported.result.characters.map(item => item.id),
         stories: imported.result.stories.map(item => item.id),
         personas: imported.result.personas.map(item => item.id),
         conversations,
         presets: presetResults,
+        quick_replies: {
+          converted: quickReplyExtension?.manifest.capabilities.quick_actions.length ?? 0,
+          rejected: rejectedQuickReplies,
+          extension_id: quickReplyExtension?.id ?? null,
+        },
         skipped: imported.result.skipped,
-        passive_items: inventory.passive,
+        passive_items: inventory.passive.map(item => item.status === 'ready_to_convert' ? { ...item, status: 'converted' } : item),
       }
       this.db.raw.prepare("UPDATE migration_sessions SET status='applied', mapping_json=?, result_json=?, warnings_json=?, updated_at=? WHERE id=?")
         .run(stableStringify(mapping), stableStringify(result), stableStringify(warnings), nowIso(), sessionId)
@@ -531,6 +638,7 @@ export class SillyTavernMigrationService {
       })
 
       const sourceSyncWarnings = []
+      let retrievalDocuments = 0
       for (const character of imported.result.characters) {
         try { this.storySources?.syncRuntimeCharacter(character.id, { character }) } catch (error) {
           sourceSyncWarnings.push(`${character.name}: ${error.message}`)
@@ -540,12 +648,23 @@ export class SillyTavernMigrationService {
         try { this.storySources?.syncRuntimeStory(story.id) } catch (error) {
           sourceSyncWarnings.push(`${story.title}: ${error.message}`)
         }
+        try { retrievalDocuments += this.retrievalIndex?.indexStory(this.repository.getStory(story.id)).indexed ?? 0 } catch (error) {
+          sourceSyncWarnings.push(`${story.title} retrieval index: ${error.message}`)
+        }
       }
-      if (sourceSyncWarnings.length) {
-        warnings.push(...sourceSyncWarnings.map(message => `Editable Story source could not be synchronized for ${message}`))
-        this.db.raw.prepare('UPDATE migration_sessions SET warnings_json=?, updated_at=? WHERE id=?')
-          .run(stableStringify(warnings), nowIso(), sessionId)
+      for (const conversation of conversations) {
+        try { retrievalDocuments += this.retrievalIndex?.indexConversation(conversation.id).indexed ?? 0 } catch (error) {
+          sourceSyncWarnings.push(`${conversation.title} retrieval index: ${error.message}`)
+        }
       }
+      if (sourceSyncWarnings.length) warnings.push(...sourceSyncWarnings.map(message => `Post-import synchronization failed for ${message}`))
+      const storedResult = json(this.db.raw.prepare('SELECT result_json FROM migration_sessions WHERE id = ?').get(sessionId)?.result_json, {})
+      storedResult.retrieval_index = { indexed_documents: retrievalDocuments, status: this.retrievalIndex ? 'rebuilt_from_source' : 'unavailable' }
+      storedResult.passive_items = (storedResult.passive_items ?? []).map(item => item.type === 'vectors'
+        ? { ...item, status: this.retrievalIndex ? 'source_reindexed' : 'rebuild_required' }
+        : item)
+      this.db.raw.prepare('UPDATE migration_sessions SET result_json=?, warnings_json=?, updated_at=? WHERE id=?')
+        .run(stableStringify(storedResult), stableStringify(warnings), nowIso(), sessionId)
     } catch (error) {
       this.db.raw.prepare("UPDATE migration_sessions SET status='failed', result_json=?, updated_at=? WHERE id=?")
         .run(stableStringify({ error: { code: error.code || 'migration_failed', message: error.message } }), nowIso(), sessionId)

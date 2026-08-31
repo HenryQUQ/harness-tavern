@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { createApp } from '../src/app.js'
+import { installDeterministicTestProvider } from '../test-support/deterministic-provider.js'
 
-export async function testApp(t, extraEnv = {}) {
+export async function testApp(t, extraEnv = {}, { deterministicProvider = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'harness-tavern-test-'))
   const sink = { log() {}, warn() {}, error() {} }
-  const app = createApp({ env: { ...process.env, HT_DATA_DIR: dir, HT_PORT: '0', HT_HOST: '127.0.0.1', HT_LOG_LEVEL: 'error', HT_SEED_SAMPLE_CONVERSATION: 'true', ...extraEnv }, loggerSink: sink })
+  const env = { ...process.env, HT_DATA_DIR: dir, HT_PORT: '0', HT_HOST: '127.0.0.1', HT_LOG_LEVEL: 'error', HT_SEED_SAMPLE_CONVERSATION: 'true', ...extraEnv }
+  const app = createApp({ env, loggerSink: sink })
+  if (deterministicProvider) installDeterministicTestProvider(app, { includeConversation: app.config.seedSampleConversation })
   await app.listen()
   const address = app.server.address()
   const baseUrl = `http://127.0.0.1:${address.port}`

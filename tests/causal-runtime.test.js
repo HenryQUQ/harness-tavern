@@ -3,7 +3,7 @@ import test from 'node:test'
 import { reduceEvents } from '../src/domain/projection.js'
 import { ActionRegistry, agendaLifecycleTransition, normalizeStoryAgendas } from '../src/runtime/action-registry.js'
 import { visibleWorld } from '../src/runtime/context-builder.js'
-import { narrationContradiction, normalizeControlPlan, normalizeNarration } from '../src/runtime/contracts.js'
+import { narrationAutonomyConflict, narrationContradiction, normalizeControlPlan, normalizeNarration } from '../src/runtime/contracts.js'
 import { SAMPLE_IDS } from '../src/domain/seed.js'
 import { testApp } from './helpers.js'
 
@@ -17,8 +17,8 @@ function providerResult(content) {
   return {
     content,
     finishReason: 'stop',
-    providerId: 'mock',
-    routedProvider: 'mock',
+    providerId: 'test',
+    routedProvider: 'test',
     latencyMs: 1,
     usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0 },
   }
@@ -47,7 +47,8 @@ await test('the causal loop rejects impossible continuation and only commits aut
   const final = projection(app, conversationId)
   assert.equal(final.world.doors.west_hall.open, true)
   assert.equal(final.stateRevision, 3)
-  assert.ok(Object.values(final.agendas).every(agenda => agenda.evaluation_count >= 4))
+  assert.ok(final.agendas['mira-protect-archive'].evaluation_count >= 4)
+  assert.equal(final.agendas['rowan-survive'].evaluation_count, 0)
   assert.ok(final.observations.some(item => /releases/i.test(item.content)))
 
   const snapshot = app.db.raw.prepare('SELECT state_json FROM state_snapshots WHERE conversation_id = ? ORDER BY event_id DESC LIMIT 1').get(conversationId)
@@ -92,6 +93,17 @@ await test('narration guard rejects open-state contradictions in English and Chi
   assert.equal(narrationContradiction('锁已经解开，但门仍未打开。', current, receipts), null)
 })
 
+await test('narration guard rejects unrequested player agency across English and Chinese without blocking dialogue or requested action', () => {
+  const stoppedAtDoor = '我轻轻推开观星台的门，停在门口观察房间。'
+  assert.match(narrationAutonomyConflict('You step over the threshold and enter the room.', stoppedAtDoor), /unrequested player movement/i)
+  assert.match(narrationAutonomyConflict('你越过门槛，走进房间。', 'I open the door and remain outside.'), /unrequested player movement/i)
+  assert.match(narrationAutonomyConflict('You decide that Mira is trustworthy.', 'I watch Mira.'), /thought, feeling, memory, or choice/i)
+  assert.equal(narrationAutonomyConflict('You push the door open.', stoppedAtDoor), null)
+  assert.equal(narrationAutonomyConflict('You walk into the chamber.', 'I walk into the chamber.'), null)
+  assert.equal(narrationAutonomyConflict('Mira says, “You should step inside when you are ready.”', stoppedAtDoor), null)
+  assert.equal(narrationAutonomyConflict('You do not enter the chamber.', stoppedAtDoor), null)
+})
+
 await test('narration normalization preserves complete provider output without a Tavern character ceiling', () => {
   const content = `Opening\n${'x'.repeat(70_000)}\nEnding`
   assert.equal(normalizeNarration(content, 'char-a').content, content)
@@ -110,7 +122,7 @@ await test('Agenda lifecycle transitions are derived from authored facts rather 
   }, current), { status: 'active', rule: 'resume_when' })
 })
 
-await test('ensemble speaker plans support the complete cast without an arbitrary six-character ceiling', () => {
+await test('legacy ensemble speaker plans become Storyteller participants without an arbitrary six-character ceiling', () => {
   const cast = Array.from({ length: 8 }, (_value, index) => ({ character_id: `char-${index + 1}` }))
   const speakerIds = cast.map(member => member.character_id)
   const plan = normalizeControlPlan({
@@ -121,7 +133,7 @@ await test('ensemble speaker plans support the complete cast without an arbitrar
     allowedSpeakerIds: speakerIds,
     userMessage: 'Everyone responds.',
   })
-  assert.deepEqual(plan.speakers, speakerIds)
+  assert.deepEqual(plan.participants, speakerIds)
 })
 
 await test('Story-authored Agendas replace duplicate card-goal loops for the same character', () => {
@@ -160,9 +172,11 @@ await test('the planner cannot schedule character Actions outside an Agenda or e
   const interpretation = app.repository.events(SAMPLE_IDS.conversation).find(event => event.type === 'intent.interpreted')
   assert.equal(interpretation.payload.discarded_action_count, 1)
   const current = projection(app, SAMPLE_IDS.conversation)
-  assert.ok(Object.values(current.agendas).every(agenda => agenda.status === 'active' && agenda.evaluation_count === 1))
+  assert.equal(current.agendas['mira-protect-archive'].status, 'active')
+  assert.equal(current.agendas['mira-protect-archive'].evaluation_count, 1)
+  assert.equal(current.agendas['lyra-stop-gate'].evaluation_count, 0)
   const evaluation = app.repository.events(SAMPLE_IDS.conversation).find(event => event.type === 'agenda.evaluated' && event.payload.agenda_id === 'mira-protect-archive')
-  assert.equal(evaluation.payload.model_decision, 'complete')
+  assert.notEqual(evaluation.payload.model_decision, 'complete')
   assert.equal(evaluation.payload.decision, 'defer')
 })
 
@@ -211,7 +225,8 @@ await test('narration guard discards a contradictory draft and persists only the
   let narrationAttempts = 0
   app.providers.complete = async (request, options) => {
     const isControl = request.messages.some(message => /control planner inside Harness Tavern/i.test(message.content))
-    if (isControl) return complete(request, options)
+    const isCharacter = request.messages.some(message => /isolated Character runtime for/i.test(message.content))
+    if (isControl || isCharacter) return complete(request, options)
     narrationAttempts += 1
     return providerResult(narrationAttempts === 1
       ? 'The door stands ajar, revealing a dark corridor beyond.'
@@ -231,7 +246,64 @@ await test('narration guard discards a contradictory draft and persists only the
   assert.equal(projection(app, conversationId).messages.at(-1).metadata.causal_retry_count, 1)
 
   const usage = app.db.raw.prepare('SELECT raw_json FROM usage_ledger WHERE turn_event_uid = ? ORDER BY id').all(result.turn_uid).map(row => JSON.parse(row.raw_json))
-  assert.equal(usage.length, 3)
+  assert.equal(usage.length, 4)
+  assert.ok(usage.some(item => item.outcome === 'discarded_causal_conflict'))
+  assert.ok(usage.some(item => item.outcome === 'completed_after_causal_retry'))
+})
+
+await test('narration guard repairs an empty structured Scene Block instead of suspending the committed turn', async t => {
+  const { app } = await testApp(t)
+  const complete = app.providers.complete.bind(app.providers)
+  let narrationAttempts = 0
+  app.providers.complete = async (request, options) => {
+    const isControl = request.messages.some(message => /control planner inside Harness Tavern/i.test(message.content))
+    const isCharacter = request.messages.some(message => /isolated Character runtime for/i.test(message.content))
+    if (isControl || isCharacter) return complete(request, options)
+    narrationAttempts += 1
+    return providerResult(narrationAttempts === 1
+      ? JSON.stringify({ blocks: [{ type: 'narration', content: '' }] })
+      : JSON.stringify({ blocks: [{ type: 'narration', content: 'The failed attempt leaves the locked door exactly as it was.' }] }))
+  }
+
+  const result = await app.turns.run(SAMPLE_IDS.conversation, {
+    content: 'I try to open the locked west door.',
+    idempotencyKey: 'guard-empty-scene-block',
+  })
+  assert.equal(narrationAttempts, 2)
+  assert.equal(result.status, 'completed')
+  assert.equal(result.messages[0].content, 'The failed attempt leaves the locked door exactly as it was.')
+  assert.equal(result.messages[0].causal_retry_count, 1)
+  assert.equal(result.messages[0].causal_fallback, false)
+  const usage = app.db.raw.prepare('SELECT raw_json FROM usage_ledger WHERE turn_event_uid = ? ORDER BY id').all(result.turn_uid).map(row => JSON.parse(row.raw_json))
+  assert.ok(usage.some(item => item.outcome === 'discarded_invalid_scene_output'))
+  assert.ok(usage.some(item => item.outcome === 'completed_after_causal_retry'))
+})
+
+await test('narration guard discards unrequested player movement and accepts a corrected Storyteller beat', async t => {
+  const { app } = await testApp(t)
+  const complete = app.providers.complete.bind(app.providers)
+  let narrationAttempts = 0
+  app.providers.complete = async (request, options) => {
+    const isControl = request.messages.some(message => /control planner inside Harness Tavern/i.test(message.content))
+    const isCharacter = request.messages.some(message => /isolated Character runtime for/i.test(message.content))
+    if (isControl || isCharacter) return complete(request, options)
+    narrationAttempts += 1
+    return providerResult(narrationAttempts === 1
+      ? 'You step across the threshold. Mira watches from beside the silent orrery.'
+      : 'The closed doorway blocks the silent orrery. Mira watches from the far side, waiting for your choice.')
+  }
+
+  const result = await app.turns.run(SAMPLE_IDS.conversation, {
+    content: 'I push the observatory door open, then stop outside at the threshold.',
+    idempotencyKey: 'guard-player-agency',
+  })
+  assert.equal(narrationAttempts, 2)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].character_id, 'narrator')
+  assert.match(result.messages[0].content, /waiting for your choice/)
+  assert.doesNotMatch(result.messages[0].content, /you step/i)
+  assert.equal(result.messages[0].causal_retry_count, 1)
+  const usage = app.db.raw.prepare('SELECT raw_json FROM usage_ledger WHERE turn_event_uid = ? ORDER BY id').all(result.turn_uid).map(row => JSON.parse(row.raw_json))
   assert.ok(usage.some(item => item.outcome === 'discarded_causal_conflict'))
   assert.ok(usage.some(item => item.outcome === 'completed_after_causal_retry'))
 })
@@ -245,7 +317,8 @@ await test('narration guard falls back to canonical observations after a second 
   let narrationAttempts = 0
   app.providers.complete = async (request, options) => {
     const isControl = request.messages.some(message => /control planner inside Harness Tavern/i.test(message.content))
-    if (isControl) return complete(request, options)
+    const isCharacter = request.messages.some(message => /isolated Character runtime for/i.test(message.content))
+    if (isControl || isCharacter) return complete(request, options)
     narrationAttempts += 1
     return providerResult('The door is ajar and reveals a corridor.')
   }
@@ -258,7 +331,7 @@ await test('narration guard falls back to canonical observations after a second 
   assert.equal(result.messages[0].causal_fallback, true)
   assert.match(result.messages[0].content, /route remains closed until a separate open action succeeds/i)
   assert.doesNotMatch(result.messages[0].content, /ajar|reveals? a corridor/i)
-  assert.equal(result.context_manifests.narration[SAMPLE_IDS.mira].causal_guard.fallback, true)
+  assert.equal(result.context_manifests.narration.storyteller.causal_guard.fallback, true)
   assert.equal(projection(app, conversationId).world.doors.west_hall.open, false)
 })
 
@@ -269,7 +342,7 @@ await test('commands survive model failure and resume exactly once', async t => 
   })
   const complete = app.providers.complete.bind(app.providers)
   app.providers.complete = async () => ({
-    content: 'not a control plan', finishReason: 'stop', providerId: 'mock', latencyMs: 1,
+    content: 'not a control plan', finishReason: 'stop', providerId: 'test', latencyMs: 1,
     usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
   })
   await assert.rejects(
@@ -290,7 +363,7 @@ await test('commands survive model failure and resume exactly once', async t => 
   assert.equal(projection(app, conversation.id).world.items.archive_key.location, 'user')
 })
 
-await test('narration receives actor-scoped state while the planner can see director facts', async t => {
+await test('Character contexts are isolated and the Storyteller receives only filtered performance briefs', async t => {
   const { app } = await testApp(t)
   const conversation = app.repository.getConversation(SAMPLE_IDS.conversation)
   const story = app.repository.getStory(conversation.story_id)
@@ -301,20 +374,45 @@ await test('narration receives actor-scoped state while the planner can see dire
   assert.equal(miraWorld.items.lens_fragment, undefined)
   assert.equal(rowanWorld.items.lens_fragment.label, 'Celestial lens fragment')
 
-  const miraContext = app.contextBuilder.buildNarration({
+  const miraMember = cast.find(member => member.character_id === SAMPLE_IDS.mira)
+  const rowanMember = cast.find(member => member.character_id === SAMPLE_IDS.rowan)
+  const miraContext = app.contextBuilder.buildCharacter({
     conversation, story, persona: app.repository.getPersona(conversation.persona_id), cast, projection: current,
-    actorId: SAMPLE_IDS.mira, userMessage: 'What do you see?', turnReceiptIds: [],
+    member: miraMember, userMessage: 'What do you see?', turnReceiptIds: [],
   })
-  const rowanContext = app.contextBuilder.buildNarration({
+  const rowanContext = app.contextBuilder.buildCharacter({
     conversation, story, persona: app.repository.getPersona(conversation.persona_id), cast, projection: current,
-    actorId: SAMPLE_IDS.rowan, userMessage: 'What do you see?', turnReceiptIds: [],
+    member: rowanMember, userMessage: 'What do you see?', turnReceiptIds: [],
   })
   const miraText = miraContext.messages.map(message => message.content).join('\n')
   const rowanText = rowanContext.messages.map(message => message.content).join('\n')
   assert.doesNotMatch(miraText, /Celestial lens fragment/i)
-  assert.match(rowanText, /Celestial lens fragment/i)
-  assert.doesNotMatch(miraText, /Rowan carries a lens fragment/i)
   assert.match(rowanText, /Rowan carries a lens fragment/i)
+  assert.doesNotMatch(miraText, /Rowan carries a lens fragment/i)
+
+  const rowanPlan = {
+    character_id: SAMPLE_IDS.rowan,
+    participation: 'speak',
+    intent: 'Answer cautiously.',
+    emotional_state: { tone: 'guarded', tension: 0.6, warmth: 0, resolve: 0.7 },
+    public_cue: 'Rowan keeps one hand near the scarf.',
+    speech_act: { kind: 'answer', meaning: 'Deflect the question without a confession.', disclose: [] },
+  }
+  const storytellerContext = app.contextBuilder.buildNarration({
+    conversation, story, persona: app.repository.getPersona(conversation.persona_id), cast, projection: current,
+    participantIds: [SAMPLE_IDS.rowan], characterPlans: [rowanPlan], userMessage: 'What do you see?', turnReceiptIds: [],
+  })
+  const storytellerText = storytellerContext.messages.map(message => message.content).join('\n')
+  assert.match(storytellerText, /Deflect the question without a confession/i)
+  assert.doesNotMatch(storytellerText, /Rowan carries a lens fragment/i)
+  assert.ok(storytellerContext.protectedPrivateFragments.some(value => /lens fragment/i.test(value)))
+
+  const disclosedContext = app.contextBuilder.buildNarration({
+    conversation, story, persona: app.repository.getPersona(conversation.persona_id), cast, projection: current,
+    participantIds: [SAMPLE_IDS.rowan], characterPlans: [{ ...rowanPlan, speech_act: { ...rowanPlan.speech_act, disclose: ['private-context'] } }],
+    userMessage: 'What do you see?', turnReceiptIds: [],
+  })
+  assert.match(disclosedContext.messages.map(message => message.content).join('\n'), /Rowan carries a lens fragment/i)
 
   current.receipts.push({
     status: 'resolved', action_id: 'private-agenda-action', action_type: 'speak', actor_id: SAMPLE_IDS.rowan,
@@ -326,7 +424,9 @@ await test('narration receives actor-scoped state while the planner can see dire
   })
   const filteredContext = app.contextBuilder.buildNarration({
     conversation, story, persona: app.repository.getPersona(conversation.persona_id), cast, projection: current,
-    actorId: SAMPLE_IDS.mira, userMessage: 'What happens next?', turnReceiptIds: ['private-agenda-action'],
+    participantIds: [SAMPLE_IDS.mira], characterPlans: [{
+      character_id: SAMPLE_IDS.mira, participation: 'observe', intent: '', emotional_state: {}, public_cue: '', speech_act: null,
+    }], userMessage: 'What happens next?', turnReceiptIds: ['private-agenda-action'],
   })
   const filteredText = filteredContext.messages.map(message => message.content).join('\n')
   assert.doesNotMatch(filteredText, /PRIVATE_AGENDA/)

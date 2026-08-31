@@ -1,4 +1,4 @@
-import { OpenAiCompatibleAdapter, normalizeUsage } from './openai-compatible.js'
+import { OpenAiCompatibleAdapter, normalizeUsage, openAiMultimodalMessages } from './openai-compatible.js'
 import { fetchJson, joinUrl } from './http.js'
 import { json } from '../util.js'
 import { thinkingPlan } from '../runtime/thinking.js'
@@ -32,7 +32,7 @@ export class OpenRouterAdapter extends OpenAiCompatibleAdapter {
       ...presetBodyOverlay(request),
       model: request.model,
       ...Array.isArray(route.models) && route.models.length ? { models: route.models } : {},
-      messages: request.messages,
+      messages: openAiMultimodalMessages(request.messages, request.attachments),
       temperature: request.temperature,
       top_p: request.topP,
       ...openAiGenerationParameters(request),

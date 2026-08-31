@@ -4,7 +4,7 @@ Harness Tavern treats portability as part of the product rather than an export a
 
 ## Editable Story source
 
-The authoring boundary is `harness-tavern-story/v2`, not a distribution pack. It contains one stable `story_key`, Character resources keyed independently from SQLite, Cast references, Lorebooks, scenes, Actions, Agendas and state rules. It can be one JSON file or a project manifest with relative files. See [STORY_SOURCES.md](STORY_SOURCES.md).
+The authoring boundary is `harness-tavern-story/v2`, not a distribution pack. It contains one stable `story_key`, Story-owned Actor resources keyed independently from SQLite, Cast references, Lorebooks, prompt layers, transforms, automations, scenes, Actions, Agendas, and state rules. It can be one JSON file or a project manifest with relative files. See [STORY_SOURCES.md](STORY_SOURCES.md).
 
 ## Tavern pack
 
@@ -19,7 +19,7 @@ The integrity-protected distribution format is JSON:
     "name": "Harness Tavern",
     "version": "..."
   },
-  "kind": "character | story | collection | playthrough | backup",
+  "kind": "story | collection | playthrough | backup",
   "title": "...",
   "items": {
     "characters": [],
@@ -33,7 +33,7 @@ The integrity-protected distribution format is JSON:
 }
 ```
 
-A Story pack includes the Character dependencies referenced by its cast. Import remaps identifiers, Cast references, scene presence lists and causal Agenda owners, preventing collisions with local content.
+A Story pack includes the Actor dependencies referenced by its Cast. The internal `items.characters` key is retained in pack v1 so existing packs remain readable; these records are Story dependencies, not independently listed Library items. Import remaps identifiers, Cast references, scene presence lists, transform scopes, and causal Agenda owners, preventing collisions with local content.
 
 The SHA-256 digest detects accidental or deliberate modification but is not a cryptographic signature and does not establish an author’s identity. Use an editable Story source for authoring and Git workflows; generate or download a pack for distribution compatibility.
 
@@ -73,7 +73,7 @@ A creator can create a revocable share record:
 create share → receive token URL → public preview/download → revoke
 ```
 
-Only a hash of the bearer token is stored. Revocation removes public access without deleting the creator’s local Story or Character.
+Only a hash of the bearer token is stored. Revocation removes public access without deleting the creator’s local Story.
 
 ## Portable link
 
@@ -95,7 +95,7 @@ Every import is transactional and records an import receipt.
 
 ## SillyTavern compatibility
 
-Character Card V2/V3 JSON, PNG cards with `chara`/`ccv3` metadata and CHARX archives are normalized into Tavern Characters. Known fields, alternate greetings, tags, creator notes, embedded lore and extension data are preserved where possible. Character Card V2 and V3 JSON can be exported. Unknown executable behaviour is never run.
+Character Card V2/V3 JSON, PNG cards with `chara`/`ccv3` metadata, and CHARX archives are normalized into single-cast Stories. Known fields, system/depth prompts, example dialogue, alternate greetings, talkativeness, tags, creator notes, embedded Lore, regex rules, and extension data are preserved where possible. Compatible regex rules become actor-scoped declarative transforms. Character Card V2 and V3 JSON remain available through compatibility export. Unknown executable behaviour is never run.
 
 For a complete move, the migration workspace accepts a SillyTavern backup ZIP or browser-selected `data/<user-handle>` directory. It previews Characters, Worlds, Groups, Chats/Group Chats, Personas and compatible generation presets before a one-time apply. Message timestamps, selected swipe and alternatives are preserved as event metadata. `secrets.json` is never copied; Quick Replies, extensions and themes are inventoried but not executed; embeddings are rebuilt from source content.
 
@@ -121,12 +121,12 @@ For a complete move, the migration workspace accepts a SillyTavern backup ZIP or
 
 ### Supported declarative contributions
 
-- **Character templates** — optional opaque Character blueprint data owned by the extension.
+- **Character templates** — legacy opaque blueprint data retained for extension compatibility; core Story creation does not expose it as a content type.
 - **Story templates** — optional opaque Story blueprint data owned by the extension.
 - **Quick actions** — optional composer text owned by the extension.
 - **Themes** — restricted visual design tokens.
 
-The registry inventories and exposes these contributions, but core **Library → New** does not apply template defaults or treat them as generation instructions. If an extension offers an opinionated assistant, it must present that behavior as extension-owned and submit its result as an explicit standard Character or Story through the normal validation boundary.
+The registry inventories and exposes these contributions, but core **Library → New Story** does not apply template defaults or treat them as generation instructions. If an extension offers an opinionated assistant, it must present that behavior as extension-owned and submit its result as an explicit standard Story through the normal validation boundary.
 
 ### Rejected content
 
@@ -140,4 +140,4 @@ This is intentional. Community extensions should be understandable, reviewable, 
 
 ## Extensibility boundary
 
-The explicit Character/Story model is the stable interoperability seam. The declarative extension registry is an optional end-user seam; Provider adapters and DeepSeek Harness/Cordis integrations are developer seams. A future code plugin system should run outside the default trust boundary and require explicit administrator installation; imported Tavern content must never silently become executable code or silently redefine core Library creation.
+The explicit Story model—including its owned Cast and Runtime—is the stable interoperability seam. The declarative extension registry is an optional end-user seam; Provider adapters and DeepSeek Harness/Cordis integrations are developer seams. A future code plugin system should run outside the default trust boundary and require explicit administrator installation; imported Tavern content must never silently become executable code or silently redefine core Library creation.

@@ -3,7 +3,6 @@ import { OpenRouterAdapter } from './openrouter.js'
 import { AnthropicAdapter } from './anthropic.js'
 import { GeminiAdapter } from './gemini.js'
 import { AzureOpenAiAdapter } from './azure-openai.js'
-import { MockAdapter } from './mock.js'
 import { providerPreset, PROVIDER_PRESETS } from './catalog.js'
 import { assert, id, json, nowIso, redact, stableStringify } from '../util.js'
 
@@ -18,7 +17,6 @@ export class ProviderRegistry {
       ['anthropic', new AnthropicAdapter({ timeoutMs: config.providerTimeoutMs })],
       ['gemini', new GeminiAdapter({ timeoutMs: config.providerTimeoutMs })],
       ['azure-openai', new AzureOpenAiAdapter({ timeoutMs: config.providerTimeoutMs })],
-      ['mock', new MockAdapter()],
     ])
   }
 
@@ -35,17 +33,15 @@ export class ProviderRegistry {
   }
 
   createConnection(input) {
-    const preset = input.provider_id === 'mock'
-      ? { id: 'mock', label: 'Built-in Demo', adapter: 'mock', baseUrl: 'mock://local', noKey: true }
-      : providerPreset(input.provider_id)
+    const preset = providerPreset(input.provider_id)
     assert(preset, 'Unknown provider preset')
     const connectionId = id('conn')
     const timestamp = nowIso()
     const label = String(input.label || preset.label).slice(0, 120)
     const baseUrl = String(input.base_url ?? preset.baseUrl ?? '').trim()
-    if (preset.adapter !== 'mock') assert(baseUrl, 'base_url is required')
+    assert(baseUrl, 'base_url is required')
     const secret = input.api_key ? this.vault.encrypt(input.api_key) : null
-    if (!preset.noKey && preset.adapter !== 'mock') assert(secret || input.allow_empty_key, 'API key or account connection is required')
+    if (!preset.noKey) assert(secret || input.allow_empty_key, 'API key or account connection is required')
     const config = {
       headers: input.headers ?? {},
       extra_body: input.extra_body ?? {},
@@ -104,12 +100,22 @@ export class ProviderRegistry {
   }
 
   adapterFor(connection) {
-    const preset = connection.provider_id === 'mock'
-      ? { adapter: 'mock' }
-      : providerPreset(connection.provider_id) ?? { adapter: 'openai-compatible' }
-    const adapter = this.adapters.get(preset.adapter)
+    const preset = providerPreset(connection.provider_id) ?? { adapter: 'openai-compatible' }
+    const adapter = this.adapters.get(connection.provider_id) ?? this.adapters.get(preset.adapter)
     assert(adapter, `No adapter registered for ${preset.adapter}`, 500, 'configuration_error')
     return adapter
+  }
+
+  mediaCapabilities(connectionId, modelId = '') {
+    const connection = this.getConnection(connectionId)
+    const model = String(modelId).toLocaleLowerCase()
+    const provider = connection.provider_id
+    const imageModel = /(gpt-4o|gpt-4\.1|vision|gemini|claude-3|claude-sonnet-4|claude-opus-4|qwen[^/]*[-_.]?vl|llava|pixtral|molmo)/i.test(model)
+    return {
+      images: ['gemini', 'anthropic'].includes(provider) || (['openai', 'azure-openai', 'openrouter', 'openai-compatible', 'ollama'].includes(provider) && imageModel),
+      text: true,
+      audio: false,
+    }
   }
 
   async complete(request, { connectionId, accountConnectionId = null, signal } = {}) {
@@ -147,8 +153,25 @@ export class ProviderRegistry {
     return adapter.listProviders(connection, credential, options.signal)
   }
 
+  async testConnection(connectionId, { accountConnectionId = null, signal } = {}) {
+    const connection = this.getConnection(connectionId)
+    const startedAt = Date.now()
+    const catalog = await this.listModels(connectionId, { accountConnectionId, refresh: true, signal })
+    const modelIds = catalog.models.map(model => typeof model === 'string' ? model : model.id).filter(Boolean)
+    return {
+      ok: true,
+      connection_id: connectionId,
+      provider_id: connection.provider_id,
+      latency_ms: Date.now() - startedAt,
+      model_count: modelIds.length,
+      default_model: connection.default_model,
+      default_model_available: !connection.default_model || modelIds.includes(connection.default_model),
+      checked_at: nowIso(),
+    }
+  }
+
   #publicConnection(row) {
-    const preset = row.provider_id === 'mock' ? { label: 'Built-in Demo', adapter: 'mock' } : providerPreset(row.provider_id)
+    const preset = providerPreset(row.provider_id)
     return {
       id: row.id,
       provider_id: row.provider_id,

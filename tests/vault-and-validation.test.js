@@ -32,7 +32,7 @@ await test('configuration requires a token when binding beyond loopback', () => 
   assert.equal(config.host, '0.0.0.0')
 })
 
-await test('model envelope falls back to a cast speaker and rejects empty output', () => {
+await test('legacy model envelope falls back to a cast speaker and rejects empty output', () => {
   const response = `Hello ${'x'.repeat(35_000)}`
   const envelope = normalizeEnvelope({ response }, { castIds: ['char-a'] })
   assert.deepEqual(envelope.messages, [{ character_id: 'char-a', content: response }])

@@ -1,6 +1,6 @@
 # Getting started
 
-This guide takes you from a fresh checkout to your first character chat or Story playthrough. You do not need an AI API key to complete it.
+This guide takes you from a fresh checkout to your first Story Playthrough. You do not need an AI API key to complete it.
 
 ## Before you begin
 
@@ -25,32 +25,24 @@ npm start
 
 Open **http://127.0.0.1:8787** in your browser. Keep the terminal open while you use the application. Press `Ctrl+C` in that terminal to stop it.
 
-The first startup creates an offline demo connection, a default Persona, three sample characters, and the Story **Midnight at the Glass Observatory**. It does not create a fake conversation, so Chats remains an honest record of sessions you started.
+The first startup creates a default Persona and the three-member ensemble Story **Midnight at the Glass Observatory**. It creates neither a model connection nor a fake Conversation, so provider choice is explicit and Chats remains an honest record of Playthroughs you started.
 
 ## Complete onboarding
 
 The initial setup asks only:
 
 1. what the Tavern should call you;
-2. whether you want to meet a Character, enter a Story, or open the Library.
+2. whether you want to enter a Story or open the Story Library.
 
-Choose any route. The built-in demo connection is selected automatically, so provider setup does not interrupt the first experience.
-
-## Start a character chat
-
-1. Open **Library** and choose a Character.
-2. Review the public profile and select your Persona.
-3. Choose **Start chat**.
-4. Write what you say or attempt. The system will not invent your private thoughts, feelings, dialogue, or a successful action on your behalf.
-
-The Character Card, relationship state, memories, and conversation events remain separate from the selected AI model. You can change models later without recreating the relationship.
+Choose either route. You can author, inspect, and import Stories without a provider. Before starting a Playthrough, connect an AI service under **Settings → AI Connections**.
 
 ## Enter a Story
 
 1. Open **Library** and select a Story.
 2. Review its hook, cast, player role, and content notes.
-3. Choose **Enter Story**.
-4. Select a Persona and begin the playthrough.
+3. If no AI service is connected, follow the prompt to **Settings → AI Connections**.
+4. Choose **Enter Story**. A single-cast Story may also offer alternate Character Card greetings.
+5. Select a Persona and begin the Playthrough.
 
 Open the Story Engine panel during play to see the information that is safe for the player:
 
@@ -60,7 +52,11 @@ Open the Story Engine panel during play to see the information that is safe for 
 - the current State revision;
 - timelines and context diagnostics.
 
-Creator-only lore, private character knowledge, raw control plans, and hidden state are not shown there.
+Creator-only Lore, private Cast knowledge, raw control plans, and hidden state are not shown there.
+
+Each input advances the Story once. The Director first interprets only the player's contribution. Every relevant Character then decides independently from its own private knowledge and actor-visible facts; each can act, speak, react, observe, or intentionally remain silent. Finally, one Storyteller composes typed narration, action, and dialogue Scene Blocks into a coherent beat rather than producing one reply from every Cast member. The slim Cast line above the stage shows each Character's public presence and latest participation without exposing private thoughts.
+
+The composer can attach up to four supported files (6 MB combined, 4 MB each). Text, Markdown, and JSON can be read as bounded text. Images reach only a provider/model known to support visual input; otherwise the Storyteller sees metadata and is instructed not to invent what the image contains. Sent attachments become immutable conversation history. The microphone button uses browser voice dictation when available, and **Read aloud** uses browser speech synthesis; neither changes causal State.
 
 ## Create a branch
 
@@ -68,7 +64,7 @@ A Story playthrough can contain multiple timelines. Create a new timeline when y
 
 ## Connect your preferred AI
 
-The offline demo is useful for learning the interface, but a real provider gives you the quality and model choice of that service.
+Harness Tavern has no built-in generation model. A Playthrough requires an explicitly connected provider, while content authoring and library operations remain local and provider-independent.
 
 1. Open **Settings → AI Connections**.
 2. Choose a provider or an OpenAI-compatible connection.
@@ -104,15 +100,15 @@ Open **Settings → Import from SillyTavern** and choose one of:
 - a SillyTavern backup ZIP;
 - a SillyTavern user-data directory.
 
-Harness Tavern shows a read-only preview before import. Review warnings and choose **Copy**, **Replace**, or **Skip** for conflicts. Compatible Characters, Worlds, Groups, Chats, Group Chats, Personas, swipes, and generation presets are imported together. Secrets are excluded, and executable extension content is never trusted or run.
+Harness Tavern shows a read-only preview before import. Review warnings and choose **Copy**, **Replace**, or **Skip** for conflicts. Character Cards become single-cast Stories, Groups become ensemble Stories, World Info becomes narrator-only Stories, and Chats become mapped Story Playthroughs. Personas, swipes, and compatible generation presets are retained. Secrets are excluded, and executable extension content is never trusted or run.
 
 Read [Migration](MIGRATION.md) for the exact compatibility and rollback boundary.
 
 ## Add, edit, and share content
 
-Open **Library → New** to create a blank Character or Story, or import an existing standard file. A blank Character asks only for a name. A blank Story asks only for a title and explicit Cast, then creates an empty `harness-tavern-story/v2` structure. Harness Tavern does not invent authored fields from a brief or fixed prompt.
+Open **Library → New Story** to create a blank Story, or choose **Import as Story** for existing content. A blank Story asks only for a title; it may start narrator-only, with one inline Cast member, or with an ensemble added later. Harness Tavern creates an empty `harness-tavern-story/v2` structure and does not invent authored fields from a brief or fixed prompt.
 
-The complete editors expose all Character and Story fields after the structure exists. You can also edit a Story source with a text editor and Git. An optional extension may provide its own opinionated assistance, but the core Library always receives explicit standard content.
+The complete Story workspace exposes Story identity, inline Cast fields, prompt layers, alternate greetings, Lore, Scenes, causal definitions, safe transforms, automations, and compatibility data. You can also edit a Story source with a text editor and Git. An optional extension may provide its own opinionated assistance, but the core Library always receives explicit standard Story content.
 
 Use:
 

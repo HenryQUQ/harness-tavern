@@ -1,49 +1,72 @@
 # Migration
 
-Always copy the complete `HT_DATA_DIR` before an application upgrade. The SQLite database, `credentials.key`, Story source directory and uploaded assets are one recoverable unit.
+Always copy the complete `HT_DATA_DIR` before an application upgrade. The SQLite database, `credentials.key`, Story source directory, and uploaded assets are one recoverable unit.
 
-## From Harness Tavern 0.12.x
+## Upgrade to 0.16.0
 
-Start the current release against the existing data directory. Database migration 8 adds:
+No database migration is required. Existing Stories receive conservative Character Runtime defaults at read time: balanced initiative, present initial presence, and no authored drives, fears, values, mannerisms, or reveal policy.
 
-- a versioned runtime definition on each Story;
-- causal event metadata (`event_uid`, command, correlation, causation and stream version);
-- durable Control Loop runs;
-- deterministic state snapshots;
-- preview/apply migration sessions.
+New turns now add event-sourced Character inner state and structured Scene Blocks. Older message events remain readable as plain narration. Existing `metadata` objects are preserved; creators can opt into richer behavior by adding `cast[].metadata.actor_runtime` in the Story editor or source file.
 
-Existing Characters, Stories, Playthroughs and Conversations remain readable. Existing Story v1 files remain valid. A database-only Story is materialized as an editable Story project if it has no source binding; current exports use Story v2.
+The control model now selects relevant participants but cannot speak or decide agendas for them. Each selected Character receives an isolated model call with only its own private context, and the Storyteller receives filtered performance briefs after Character decisions. This can increase provider calls per turn for ensemble scenes; reactive Characters and relevance selection keep ordinary turns bounded.
+
+## Upgrade to 0.15.0
+
+Database migrations 10–12 are automatic and idempotent:
+
+- migration 10 removes the retired built-in model connection and transfers affected Conversations to the earliest enabled real provider when one exists;
+- migration 11 creates the deterministic local retrieval index used for Story source and long-history recall; source content is rebuilt at startup rather than trusting imported vector artifacts;
+- migration 12 adds Conversation-scoped attachment metadata. Attachment bytes live under `HT_DATA_DIR/assets` and are part of the same backup unit as SQLite.
+
+Existing multi-Character turns remain readable. Persisted legacy `speakers`/`speaker_plan` fields are accepted as participant hints, but every new turn renders one coherent Storyteller message rather than one response per Character.
+
+## Upgrade to 0.14.0
+
+Database migration 9 moves older content into the Story-only product model without deleting compatibility records:
+
+- every Conversation without a Story receives a recovered Story built from its Conversation Cast;
+- every Story Conversation without a Playthrough receives one;
+- every Character Card not referenced by a Story becomes a single-cast Story;
+- embedded World Info and compatible Character Card regex scripts become Story Lore and declarative Runtime transforms;
+- repeated startup is idempotent and does not create duplicate Stories or Playthroughs.
+
+Existing Story sources remain valid. Actor rows and Character compatibility endpoints remain internally available for source bindings and old integrations, but Home, Library, Chats, creation, and sharing expose Stories rather than a separate Character product.
+
+Migration 8 from 0.13.0 remains responsible for versioned Story Runtime definitions, causal event metadata, durable Control Loop runs, deterministic snapshots, and preview/apply migration sessions. A database-only Story is materialized as an editable Story v2 source when its creator workspace opens.
 
 ## From SillyTavern
 
-Open **Settings → Import from SillyTavern**. Choose either:
+Open **Settings → Import from SillyTavern**. Choose:
 
 - an individual Character Card JSON/PNG/CHARX;
 - a SillyTavern backup ZIP;
-- the active user data directory (normally `data/<user-handle>`), using the browser folder picker.
+- the active user data directory (normally `data/<user-handle>`) with the browser folder picker.
 
-The first step is read-only preview. It reports counts, file-level warnings and passive content before any library mutation. Apply then uses the selected conflict strategy exactly once. Character, Story, Persona, preset, chat-event and import-receipt database writes commit atomically; a later failure rolls all of them back. Canonical Story files are synchronized after that commit, with any filesystem failure retained as an explicit migration warning for repair.
+Preview is read-only. It reports counts, file-level warnings, conflicts, and passive content before any Library mutation. Apply uses the selected Copy/Replace/Skip strategy once. Story, Actor dependency, Persona, preset, Playthrough event, and import-receipt database writes commit atomically; a later failure rolls them all back. Canonical Story files synchronize after the database commit, and any filesystem failure remains visible as a repair warning.
 
 | SillyTavern content | Harness Tavern destination |
 |---|---|
-| Character Cards V2/V3, PNG, CHARX | Characters and editable card resources |
-| World Info | Narrator-only editable Stories with Lorebooks |
-| Groups | Multi-character editable Stories and Cast settings |
-| Chats / Group Chats | Conversations and append-only message events |
+| Character Card V2/V3, PNG, CHARX | Single-cast Story with a Story-owned Actor resource |
+| Embedded Character Book | Actor-scoped Lore inside that Story |
+| Character regex scripts | Safe actor-scoped Story Runtime transforms |
+| World Info | Narrator-only Story with Lorebook entries |
+| Group | Ensemble Story with ordered Cast and member settings |
+| Chat / Group Chat | Conversation events inside a mapped Story Playthrough |
 | Swipes and selected swipe | Message event metadata |
-| Personas in `settings.json` | Personas |
-| Compatible Chat/Text presets | Generation presets after normalization |
-| Vector indexes | Not copied; rebuild from source content |
-| Quick Replies, extensions, themes, Moving UI | Inventoried, never executed |
+| Persona in `settings.json` | Persona |
+| Compatible Chat/Text preset | Generation preset after normalization |
+| Vector index | Not copied; rebuild from source content |
+| Plain manual Quick Replies | Declarative composer actions when they contain no slash command, script, auto trigger, or condition |
+| Scripted/automatic Quick Replies, executable extensions, themes, Moving UI | Inventoried, never executed |
 | `secrets.json` | Always excluded |
 
-Original timestamps, chat metadata and unrecognized non-executable compatibility fields are retained where practical. Imported conversations begin without an artificial opening message. SillyTavern’s textual history is preserved, but it cannot retroactively establish authoritative causal facts; new turns use the causal runtime from their imported boundary onward.
+The importer preserves descriptions, personality, scenario, first message, alternate greetings, example dialogue, system prompt, depth prompt, talkativeness, compatible embedded Lore, regex rules, timestamps, and unrecognized non-executable extension fields where practical. Imported chats begin without an artificial opening message. Text history cannot retroactively establish authoritative causal facts; new turns use the causal runtime from the imported boundary onward.
 
 The HTTP transport defaults to a 128 MB migration-body limit (`HT_MIGRATION_BODY_LIMIT`). Expanded archives also have bounded total and per-file limits. For larger libraries, migrate one user or archive at a time.
 
 ## Portable backup and restore
 
-Use **Download full backup** to export Characters, Stories, Personas, Conversations with their causal event streams, the local profile and custom generation presets. Provider connections and credential ciphertext are deliberately absent. Import uses the same preview and Copy/Replace/Skip workflow as other Tavern packs.
+Use **Download full backup** to export Stories with their Cast dependencies, Personas, Playthrough Conversations and causal event streams, the local profile, and custom generation presets. Provider connections and credential ciphertext are absent. Import uses the same preview and Copy/Replace/Skip flow as other Tavern packs.
 
 Back up both SQLite and editable Story sources even when portable backups are enabled: the data-directory copy is the authoritative disaster-recovery artifact, while a portable pack is the interoperable content artifact.
 

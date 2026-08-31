@@ -6,7 +6,7 @@ export const SAMPLE_IDS = Object.freeze({
   lyra: 'char_lyra_voss',
   persona: 'persona_wayfarer',
   story: 'story_glass_observatory',
-  connection: 'conn_builtin_mock',
+  connection: 'conn_test_deterministic',
   playthrough: 'play_glass_observatory_demo',
   conversation: 'conv_glass_observatory_test',
   branch: 'branch_glass_observatory_main',
@@ -175,25 +175,28 @@ const CAST = [
     role: 'Archivist and investigator',
     public_context: 'Mira was sent to audit the archive. Everyone knows she discovered the lens missing.',
     private_context: 'Mira alone knows the ledger margins encode a star map. Her scar reacts when the observatory rewrites history.',
+    metadata: { sample: true, actor_runtime: { initiative: 'proactive', initial_presence: 'present', drives: ['Protect the archive', 'Understand why history is changing'], fears: ['The archive erasing a person'], values: ['Evidence before certainty'], mannerisms: ['Touches the scar when the observatory shifts'], reveal_policy: 'Reveal the star-map secret only when the evidence or immediate danger makes concealment more harmful.' } },
   },
   {
     character_id: SAMPLE_IDS.rowan,
     role: 'Courier and guarded witness',
     public_context: 'Rowan delivered a sealed case earlier tonight and claims not to know its contents.',
     private_context: 'Rowan carries a lens fragment—half of the missing lens—inside the red scarf. Do not reveal this as shared knowledge until Rowan confesses or evidence exposes it.',
+    metadata: { sample: true, actor_runtime: { initiative: 'reactive', initial_presence: 'present', drives: ['Survive the night', 'Keep possession of the lens fragment'], fears: ['Being searched or cornered'], values: ['Loyalty earned slowly'], mannerisms: ['Keeps one hand near the red scarf'], reveal_policy: 'Do not disclose the lens fragment casually; confession requires trust, necessity, or direct exposure.' } },
   },
   {
     character_id: SAMPLE_IDS.lyra,
     role: 'Warden and keeper of the rules',
     public_context: 'Lyra normally controls every door and mechanism, but the observatory has rejected her keys.',
     private_context: 'Lyra knows the alignment opens an erased gate and suspects one person present may be a materialised memory. She has not inspected the courier’s belongings and cannot identify who holds the missing piece.',
+    metadata: { sample: true, actor_runtime: { initiative: 'balanced', initial_presence: 'present', drives: ['Prevent an uncontrolled alignment', 'Keep the observatory contained'], fears: ['The erased gate opening'], values: ['Duty and controlled procedure'], mannerisms: ['Counts mechanisms under her breath'], reveal_policy: 'Share warnings before theories; reveal the erased gate only when its risk becomes immediately relevant.' } },
   },
 ]
 
 export function seedDemo({ db, repository, force = false, includeConversation = false }) {
   const existingVersion = db.getSetting('seed.version', 0)
   const hasRequestedConversation = !includeConversation || Boolean(db.raw.prepare('SELECT 1 FROM conversations WHERE id = ?').get(SAMPLE_IDS.conversation))
-  if (!force && existingVersion >= 7 && hasRequestedConversation) return { seeded: false, version: existingVersion }
+  if (!force && existingVersion >= 8 && hasRequestedConversation) return { seeded: false, version: existingVersion }
   const timestamp = nowIso()
   db.transaction(() => {
     for (const character of CHARACTERS) {
@@ -234,12 +237,6 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
     )
 
     db.raw.prepare(`
-      INSERT INTO provider_connections(id, provider_id, label, base_url, default_model, secret_envelope, config_json, enabled, created_at, updated_at)
-      VALUES (?, 'mock', 'Built-in Demo Model', 'mock://local', 'mock/roleplay-ensemble', NULL, '{}', 1, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET label=excluded.label, default_model=excluded.default_model, enabled=1, updated_at=excluded.updated_at
-    `).run(SAMPLE_IDS.connection, timestamp, timestamp)
-
-    db.raw.prepare(`
       INSERT INTO stories(
         id, title, summary, premise, genre, tone, opening_scene, world_rules_json, lore_json,
         initial_state_json, author_notes, created_at, updated_at, slug, hook, cover_url,
@@ -268,11 +265,14 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
       db.raw.prepare(`
         INSERT INTO story_cast(story_id, character_id, role, public_context, private_context, sort_order, metadata_json)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(SAMPLE_IDS.story, member.character_id, member.role, member.public_context, member.private_context, index, stableStringify({ sample: true }))
+      `).run(SAMPLE_IDS.story, member.character_id, member.role, member.public_context, member.private_context, index, stableStringify(member.metadata))
     })
   })
 
-  if (includeConversation) {
+  const defaultConnection = includeConversation
+    ? db.raw.prepare("SELECT id, default_model FROM provider_connections WHERE enabled = 1 AND provider_id <> 'mock' ORDER BY created_at LIMIT 1").get()
+    : null
+  if (includeConversation && defaultConnection) {
     const conversation = db.raw.prepare('SELECT id FROM conversations WHERE id = ?').get(SAMPLE_IDS.conversation)
     if (!conversation) {
       db.raw.prepare(`
@@ -286,8 +286,8 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
         story_id: SAMPLE_IDS.story,
         persona_id: SAMPLE_IDS.persona,
         playthrough_id: SAMPLE_IDS.playthrough,
-        connection_id: SAMPLE_IDS.connection,
-        model_id: 'mock/roleplay-ensemble',
+        connection_id: defaultConnection.id,
+        model_id: defaultConnection.default_model,
         thinking_intensity: 'auto',
         generation: { response_length: 'natural', initiative: 'balanced', pacing: 'ensemble' },
       })
@@ -297,13 +297,13 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
       db.raw.prepare(`
         UPDATE conversations SET story_id=?, persona_id=?, playthrough_id=?, connection_id=?, model_id=?,
           thinking_intensity='auto', archived=0, updated_at=? WHERE id=?
-      `).run(SAMPLE_IDS.story, SAMPLE_IDS.persona, SAMPLE_IDS.playthrough, SAMPLE_IDS.connection, 'mock/roleplay-ensemble', nowIso(), SAMPLE_IDS.conversation)
+      `).run(SAMPLE_IDS.story, SAMPLE_IDS.persona, SAMPLE_IDS.playthrough, defaultConnection.id, defaultConnection.default_model, nowIso(), SAMPLE_IDS.conversation)
       db.raw.prepare('DELETE FROM conversation_cast WHERE conversation_id = ?').run(SAMPLE_IDS.conversation)
       CAST.forEach((member, index) => {
         db.raw.prepare(`
           INSERT INTO conversation_cast(conversation_id, character_id, role, public_context, private_context, sort_order, muted, spotlight, metadata_json)
           VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)
-        `).run(SAMPLE_IDS.conversation, member.character_id, member.role, member.public_context, member.private_context, index, stableStringify({ sample: true }))
+        `).run(SAMPLE_IDS.conversation, member.character_id, member.role, member.public_context, member.private_context, index, stableStringify(member.metadata))
       })
       db.raw.prepare(`
         INSERT INTO playthroughs(id, story_id, persona_id, title, player_role, status, current_conversation_id, created_at, updated_at)
@@ -328,6 +328,6 @@ export function seedDemo({ db, repository, force = false, includeConversation = 
     db.setSetting('user.profile', { ...profile, default_persona_id: SAMPLE_IDS.persona })
   }
 
-  db.setSetting('seed.version', 7)
-  return { seeded: true, version: 7, sample: { ...SAMPLE_IDS, conversation: includeConversation ? SAMPLE_IDS.conversation : null } }
+  db.setSetting('seed.version', 8)
+  return { seeded: true, version: 8, sample: { ...SAMPLE_IDS, conversation: includeConversation && defaultConnection ? SAMPLE_IDS.conversation : null } }
 }

@@ -1,6 +1,8 @@
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
-import { assert, cleanText, id, isExpired, json, nowIso, plainObject, randomToken, sha256Hex, stableStringify, uniqueStrings } from '../util.js'
+import { assert, cleanText, id, isExpired, json, nowIso, plainObject, randomToken, sha256Hex, slugify, stableStringify, uniqueStrings } from '../util.js'
 import { EXTENSION_FORMAT, PACK_FORMAT, PACK_VERSION, PRODUCT_NAME, PRODUCT_VERSION } from '../version.js'
+import { characterCardTransforms } from '../runtime/story-runtime.js'
+import { loreCompatibilityFields } from '../domain/lore.js'
 
 const MAX_TOKEN_BYTES = 500_000
 
@@ -109,11 +111,20 @@ export function cardToCharacter(card) {
     title: cleanText(entry.comment || entry.name || 'Lore', 300),
     content: cleanText(entry.content, 10_000),
     keywords: uniqueStrings(entry.keys ?? entry.keywords, 50, 100),
+    secondary_keywords: uniqueStrings(entry.secondary_keys ?? entry.keysecondary ?? entry.secondary_keywords, 50, 100),
+    selective: Boolean(entry.selective),
+    constant: Boolean(entry.constant),
+    enabled: entry.disable !== true && entry.enabled !== false,
+    ...loreCompatibilityFields(entry),
     visibility: 'public',
+    extensions: { sillytavern: { original: entry } },
   })) : []
   const alternateGreetings = Array.isArray(data.alternate_greetings) ? data.alternate_greetings.slice(0, 50) : []
   const exampleDialogue = cleanText(data.mes_example, 20_000)
   const systemPrompt = cleanText(data.system_prompt, 20_000)
+  const depthPrompt = plainObject(data.extensions?.depth_prompt)
+    ? { content: cleanText(data.extensions.depth_prompt.prompt, 20_000), depth: Number(data.extensions.depth_prompt.depth ?? 4), role: cleanText(data.extensions.depth_prompt.role, 40) || 'system' }
+    : cleanText(data.character_note, 20_000)
   return {
     name,
     description: cleanText(data.description, 20_000),
@@ -135,8 +146,103 @@ export function cardToCharacter(card) {
       ...alternateGreetings.length ? { alternate_greetings: alternateGreetings } : {},
       ...exampleDialogue ? { example_dialogue: exampleDialogue } : {},
       ...systemPrompt ? { system_prompt: systemPrompt } : {},
+      ...depthPrompt && (typeof depthPrompt === 'string' ? depthPrompt : depthPrompt.content) ? { character_note: depthPrompt } : {},
+      ...Number.isFinite(Number(data.extensions?.talkativeness)) ? { talkativeness: Number(data.extensions.talkativeness) } : {},
     },
   }
+}
+
+function storyRuntimeForCharacters(characters = []) {
+  return {
+    actions: [],
+    agendas: [],
+    prompt_graph: {},
+    world_schema: {},
+    state_visibility: [],
+    transforms: characters.flatMap(character => characterCardTransforms(character, character.id || character.slug || character.name)),
+    automations: [],
+  }
+}
+
+function storyFromCharacter(character, index = 0) {
+  const characterId = character.id || `imported-character-${index + 1}`
+  const importedLore = Array.isArray(character.extensions?.imported_lore) ? character.extensions.imported_lore : []
+  return {
+    id: `story-for-${characterId}`,
+    title: character.name,
+    hook: character.description || character.personality || 'An imported single-cast Story.',
+    summary: character.description || '',
+    premise: character.scenario || '',
+    genre: 'Single-cast Story',
+    tone: '',
+    opening_scene: '',
+    player_role: '',
+    world_rules: [],
+    lore: importedLore,
+    initial_state: {},
+    author_notes: '',
+    content_warnings: [],
+    tags: character.tags ?? [],
+    scenes: [],
+    metadata: { experience_kind: 'character-card', imported_character_card: true },
+    share_policy: {},
+    visibility: 'private',
+    runtime: storyRuntimeForCharacters([{ ...character, id: characterId }]),
+    cast: [{ character_id: characterId, role: 'Primary character', public_context: '', private_context: '', metadata: {} }],
+  }
+}
+
+function storyFromConversation(conversation, characters) {
+  const characterIds = (conversation.character_ids ?? []).filter(characterId => characters.some(character => character.id === characterId))
+  const key = sha256Hex(stableStringify({ conversation: conversation.id ?? conversation.title, characterIds })).slice(0, 20)
+  const title = cleanText(conversation.title, 200) || characters.filter(character => characterIds.includes(character.id)).map(character => character.name).join(' & ') || 'Imported Story'
+  const castCharacters = characterIds.map(characterId => characters.find(character => character.id === characterId)).filter(Boolean)
+  return {
+    id: `story-for-conversation-${key}`,
+    title,
+    hook: 'A Story recovered from an earlier character conversation.',
+    summary: '',
+    premise: '',
+    genre: 'Imported conversation',
+    tone: '',
+    opening_scene: '',
+    player_role: '',
+    world_rules: [],
+    lore: castCharacters.flatMap(character => character.extensions?.imported_lore ?? []),
+    initial_state: {},
+    author_notes: '',
+    content_warnings: [],
+    tags: [],
+    scenes: [],
+    metadata: { experience_kind: 'migrated-conversation' },
+    share_policy: {},
+    visibility: 'private',
+    runtime: storyRuntimeForCharacters(castCharacters),
+    cast: characterIds.map(characterId => ({ character_id: characterId, role: 'Cast member', public_context: '', private_context: '', metadata: {} })),
+  }
+}
+
+function storyOnlyPack(pack) {
+  if (pack.format !== PACK_FORMAT) return pack
+  const normalized = structuredClone(pack)
+  normalized.items ??= {}
+  normalized.items.characters ??= []
+  normalized.items.stories ??= []
+  normalized.items.conversations ??= []
+  for (const conversation of normalized.items.conversations) {
+    if (conversation.story_id) continue
+    const recovered = storyFromConversation(conversation, normalized.items.characters)
+    if (!recovered.cast.length) continue
+    normalized.items.stories.push(recovered)
+    conversation.story_id = recovered.id
+  }
+  const referenced = new Set(normalized.items.stories.flatMap(story => (story.cast ?? []).map(member => member.character_id)))
+  const wrappers = normalized.items.characters
+    .filter(character => character.id && !referenced.has(character.id))
+    .map(storyFromCharacter)
+  if (wrappers.length) normalized.items.stories.push(...wrappers)
+  if (normalized.kind === 'character') normalized.kind = 'story'
+  return integrityPack(withoutIntegrity(normalized))
 }
 
 export function characterToCardV2(character) {
@@ -200,7 +306,8 @@ export class SharingService {
 
   exportCharacter(characterId) {
     const character = this.repository.getCharacter(characterId)
-    return integrityPack({ kind: 'character', title: character.name, items: { characters: [publicCharacter(character)], stories: [], personas: [] } })
+    const portable = publicCharacter(character)
+    return integrityPack({ kind: 'story', title: character.name, items: { characters: [portable], stories: [storyFromCharacter(portable)], personas: [] } })
   }
 
   exportStory(storyId) {
@@ -290,11 +397,13 @@ export class SharingService {
       try { value = JSON.parse(value) } catch { throw Object.assign(new Error('Import text is not valid JSON'), { status: 400, code: 'invalid_json' }) }
     }
     assert(plainObject(value), 'Import data must be a JSON object')
-    if (value.format === PACK_FORMAT) return verifyPack(value)
+    if (value.format === PACK_FORMAT) return storyOnlyPack(verifyPack(value))
     if (value.format === EXTENSION_FORMAT) return { format: EXTENSION_FORMAT, manifest: value }
     if (value.spec?.startsWith?.('chara_card_') || value.name || value.data?.name) {
-      const character = cardToCharacter(value)
-      return integrityPack({ kind: 'character', title: character.name, source_format: value.spec || 'legacy-character-card', items: { characters: [character], stories: [], personas: [] } })
+      const rawCharacter = cardToCharacter(value)
+      const fingerprint = sha256Hex(stableStringify(value)).slice(0, 20)
+      const character = { ...rawCharacter, id: `imported-character-${fingerprint}`, slug: slugify(rawCharacter.name, 'imported-character') }
+      return integrityPack({ kind: 'story', title: character.name, source_format: value.spec || 'legacy-character-card', items: { characters: [character], stories: [storyFromCharacter(character)], personas: [] } })
     }
     throw Object.assign(new Error('Unsupported import format'), { status: 400, code: 'unsupported_import' })
   }
@@ -320,7 +429,7 @@ export class SharingService {
       kind: normalized.kind,
       title: normalized.title,
       normalized,
-      counts: { characters: items.characters?.length ?? 0, stories: items.stories?.length ?? 0, personas: items.personas?.length ?? 0 },
+      counts: { actors: items.characters?.length ?? 0, characters: items.characters?.length ?? 0, stories: items.stories?.length ?? 0, personas: items.personas?.length ?? 0 },
       conflicts,
       warnings: conflicts.length ? ['Choose “Create copies” to keep both versions, or “Replace” to update matching content.'] : [],
     }
@@ -394,16 +503,14 @@ export class SharingService {
       for (const source of pack.items?.conversations ?? []) {
         const storyId = result.id_map[source.story_id] ?? null
         const personaId = result.id_map[source.persona_id] ?? null
-        const characterIds = (source.character_ids ?? []).map(characterId => result.id_map[characterId]).filter(Boolean)
-        if (!storyId && !characterIds.length) {
-          result.skipped.push({ type: 'conversation', name: source.title, reason: 'No imported Story or Character matched this conversation.' })
+        if (!storyId) {
+          result.skipped.push({ type: 'conversation', name: source.title, reason: 'No imported Story matched this playthrough.' })
           continue
         }
-        const conversation = this.repository.createConversation({
+        const { conversation } = this.repository.createPlaythrough({
           title: source.title,
           story_id: storyId,
           persona_id: personaId,
-          character_ids: characterIds,
           thinking_intensity: source.thinking_intensity,
           generation: source.generation,
           prompt: source.prompt,

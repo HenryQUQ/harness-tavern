@@ -1,13 +1,34 @@
-import { assert, id, json, stableStringify } from '../util.js'
-import { reduceEvents } from '../domain/projection.js'
+import { assert, cleanText, id, json, stableStringify } from '../util.js'
+import { reduceEvents, visibleObservations } from '../domain/projection.js'
 import { ActionRegistry, agendaLifecycleTransition, normalizeStoryAgendas } from './action-registry.js'
-import { narrationContradiction, normalizeControlPlan, normalizeNarration, safeJsonObject } from './contracts.js'
+import {
+  narrationAutonomyConflict,
+  narrationContradiction,
+  narrationPrivateLeak,
+  normalizeCharacterPlan,
+  normalizeControlPlan,
+  normalizeSceneOutput,
+  safeJsonObject,
+} from './contracts.js'
+import { initialCharacterRuntimeState } from './character-runtime.js'
 import { resolveThinkingIntensity } from './thinking.js'
+import { applyStoryTransforms } from './story-runtime.js'
 
 const TRUNCATED_FINISH_REASONS = new Set([
   'length', 'max_tokens', 'max_token', 'max_output_tokens', 'model_context_window_exceeded',
 ])
 const MAX_CONTROL_STEPS = 32
+
+function explicitlyRequestsEnsemble(value) {
+  return /\b(all|everyone|each|together|the whole group)\b|所有|每个人|全员|大家|一起/iu.test(String(value ?? ''))
+}
+
+function participantLimit(pacing, castSize, userMessage) {
+  if (explicitlyRequestsEnsemble(userMessage)) return castSize
+  if (pacing === 'focused') return Math.min(1, castSize)
+  if (pacing === 'ensemble') return Math.min(3, castSize)
+  return Math.min(2, castSize)
+}
 
 function outputError(message, code) {
   const error = new Error(message)
@@ -51,7 +72,7 @@ function insertUsage(db, { conversation, turnUid, providerResult, phase, outcome
     usage.promptTokens ?? null, usage.completionTokens ?? null,
     usage.reasoningTokens ?? null, usage.totalTokens ?? null,
     usage.costUsd ?? null,
-    stableStringify({ ...usage, phase, outcome, finishReason: providerResult.finishReason ?? null, errorCode: error?.code ?? null }),
+    stableStringify({ ...usage, phase, outcome, finishReason: providerResult.finishReason ?? null, errorCode: error?.code ?? null, promptCharacters: providerResult.promptCharacters ?? null }),
     new Date().toISOString(),
   )
 }
@@ -67,6 +88,31 @@ function addUsage(total, result) {
 function canonicalNarration(observations) {
   return observations.map(observation => String(observation?.content ?? '').trim()).filter(Boolean).join(' ')
     || 'Nothing in the verified state changes.'
+}
+
+function transformedSceneOutput({ story, raw, participantIds, characterPlans, cast, narratorActorId }) {
+  const normalized = normalizeSceneOutput(raw, { participantIds, characterPlans, cast })
+  const blocks = normalized.scene_blocks.map(block => ({
+    ...block,
+    content: applyStoryTransforms(story, 'model_output', block.content, {
+      actorId: block.character_id ?? narratorActorId,
+      cast,
+    }),
+  }))
+  return normalizeSceneOutput({ blocks }, { participantIds, characterPlans, cast })
+}
+
+export function rollContinuitySummary(previous, { turnNumber, userMessage, narration, observations = [] } = {}) {
+  const observed = observations.map(item => cleanText(item?.content, 500)).filter(Boolean).join(' ')
+  const parts = [
+    `[Beat ${Number(turnNumber) || 1}] Player: ${cleanText(userMessage, 800)}`,
+    observed ? `Verified outcome: ${cleanText(observed, 1200)}` : '',
+    narration ? `Story: ${cleanText(narration, 1400)}` : '',
+  ].filter(Boolean)
+  const beats = String(previous ?? '').split(/\n(?=\[Beat \d+\])/).map(item => item.trim()).filter(Boolean)
+  beats.push(parts.join('\n'))
+  while (beats.length > 48 || beats.join('\n').length > 12_000) beats.shift()
+  return beats.join('\n')
 }
 
 function publicLoop(row) {
@@ -88,11 +134,13 @@ function publicLoop(row) {
 }
 
 export class TurnRuntime {
-  constructor({ db, repository, providers, contextBuilder, logger }) {
+  constructor({ db, repository, providers, contextBuilder, retrievalIndex = null, assets = null, logger }) {
     this.db = db
     this.repository = repository
     this.providers = providers
     this.contextBuilder = contextBuilder
+    this.retrievalIndex = retrievalIndex
+    this.assets = assets
     this.logger = logger
     this.running = new Map()
   }
@@ -121,10 +169,10 @@ export class TurnRuntime {
   async resume(runId) {
     const run = this.getRun(runId)
     assert(run.status !== 'completed', 'Control loop has already completed', 409, 'loop_completed')
-    return this.run(run.conversation_id, { content: run.input.content, resumeRunId: run.id })
+    return this.run(run.conversation_id, { content: run.input.content, attachmentIds: run.input.attachment_ids ?? [], resumeRunId: run.id })
   }
 
-  async run(conversationId, { content, idempotencyKey = null, resumeRunId = null } = {}) {
+  async run(conversationId, { content, attachmentIds = [], idempotencyKey = null, resumeRunId = null } = {}) {
     if (this.running.has(conversationId)) {
       const error = new Error('A control loop is already running for this conversation')
       error.status = 409
@@ -141,28 +189,38 @@ export class TurnRuntime {
     let activePhase = 'initialization'
     const usage = {}
     try {
-      assert(typeof content === 'string' && content.trim().length > 0, 'Message content is required')
-      content = content.trim()
       conversation = this.repository.getConversation(conversationId)
+      assert(typeof content === 'string', 'Message content is required')
+      attachmentIds = [...new Set((Array.isArray(attachmentIds) ? attachmentIds : []).map(String).filter(Boolean))]
+      content = content.trim() || (attachmentIds.length ? `I share ${attachmentIds.length} attachment${attachmentIds.length === 1 ? '' : 's'} with the Storyteller.` : '')
+      assert(content, 'Message content is required')
+      const mediaCapabilities = this.providers.mediaCapabilities(conversation.connection_id, conversation.model_id)
+      const attachments = (this.assets?.resolve(conversationId, attachmentIds) ?? []).map(item => ({
+        ...item,
+        delivery: item.mime_type.startsWith('image/') && mediaCapabilities.images
+          ? 'inline'
+          : item.extracted_text ? 'text' : 'metadata_only',
+      }))
       branchId = conversation.current_branch_id
       const story = conversation.story_id ? this.repository.getStory(conversation.story_id) : null
       const persona = this.repository.getPersona(conversation.persona_id)
       const cast = this.repository.listConversationCast(conversationId)
       const activeCast = cast.filter(member => !member.muted)
       assert(activeCast.length > 0 || cast.length === 0, 'Every character is quiet. Open Cast and invite at least one character back into the scene.', 409, 'all_cast_muted')
+      const runtimeContent = applyStoryTransforms(story, 'user_input', content, { actorId: 'user', cast: activeCast })
 
-      loop = this.#findOrCreateLoop({ conversation, branchId, content, idempotencyKey, resumeRunId, story, cast })
+      loop = this.#findOrCreateLoop({ conversation, branchId, content, attachments, idempotencyKey, resumeRunId, story, cast })
       if (loop.status === 'completed') return loop.result
       const turnUid = loop.result.turn_uid ?? id('turn')
       const commandId = loop.command_id
       const effectiveIntensity = loop.result.effective_thinking_intensity ?? resolveThinkingIntensity(conversation.thinking_intensity, {
-        userMessage: content,
+        userMessage: runtimeContent,
         castSize: activeCast.length || 1,
         hasStory: Boolean(story),
         hasWorldState: Boolean(story && Object.keys(story.initial_state ?? {}).length),
       })
       const actionRegistry = new ActionRegistry({ story, cast: activeCast })
-      const allowedSpeakerIds = activeCast.length ? [...activeCast.map(member => member.character_id), 'narrator'] : ['assistant']
+      const allowedParticipantIds = activeCast.map(member => member.character_id)
       let resultState = { ...loop.result, turn_uid: turnUid, effective_thinking_intensity: effectiveIntensity }
 
       if (loop.phase === 'interpretation') {
@@ -170,25 +228,22 @@ export class TurnRuntime {
         const events = this.repository.events(conversationId, branchId)
         const projection = reduceEvents(events.filter(event => !(event.type === 'user.message' && event.command_id === commandId)), story?.initial_state ?? {})
         const controlContext = this.contextBuilder.buildControl({
-          conversation, story, persona, cast: activeCast, projection, userMessage: content,
-          resolvedIntensity: effectiveIntensity, actionRegistry,
+          conversation, story, persona, cast: activeCast, projection, userMessage: runtimeContent,
+          resolvedIntensity: effectiveIntensity, actionRegistry, attachments,
         })
-        activeProviderResult = await this.#complete(conversation, controlContext.messages, effectiveIntensity, controller.signal, { phase: 'control' })
+        activeProviderResult = await this.#complete(conversation, controlContext.messages, effectiveIntensity, controller.signal, { phase: 'control', attachments })
         addUsage(usage, activeProviderResult)
         if (wasTruncated(activeProviderResult)) throw outputError('The AI service stopped during intent interpretation. The command is safely persisted and this loop can be resumed.', 'model_output_truncated')
         const parsed = safeJsonObject(activeProviderResult.content)
         if (!parsed) throw outputError('The AI service returned an invalid control plan. The command is safely persisted and this loop can be resumed.', 'invalid_model_output')
         const plan = normalizeControlPlan(parsed, {
           actionRegistry,
-          activeAgendas: controlContext.activeAgendas,
-          allowedSpeakerIds,
-          userMessage: content,
-          maxSpeakers: conversation.generation?.pacing === 'focused' && !/\b(all|everyone|each|together)\b|所有|每个人|一起/iu.test(content) ? 1 : allowedSpeakerIds.length,
+          activeAgendas: [],
+          allowedParticipantIds,
+          userMessage: runtimeContent,
+          maxParticipants: participantLimit(conversation.generation?.pacing, allowedParticipantIds.length, runtimeContent),
         })
-        const plannedActions = [
-          ...plan.actions,
-          ...plan.agenda_decisions.filter(decision => decision.decision === 'act' && decision.action).map(decision => decision.action),
-        ]
+        const plannedActions = [...plan.actions]
         const pendingActions = plannedActions.slice(MAX_CONTROL_STEPS)
         const executableActions = plannedActions.slice(0, MAX_CONTROL_STEPS)
         const deterministic = this.db.transaction(() => {
@@ -199,24 +254,11 @@ export class TurnRuntime {
               command_id: commandId,
               action_count: plannedActions.length,
               discarded_action_count: plan.discarded_actions.length,
-              speakers: plan.speakers,
+              participants: plan.participants,
               internal_summary: plan.internal_summary,
               context_manifest: controlContext.manifest,
             },
           }))
-          for (const decision of plan.agenda_decisions) {
-            appended.push(this.#event({
-              conversationId, branchId, commandId, correlationId: loop.id, type: 'agenda.evaluated',
-              actorId: projection.agendas[decision.agenda_id]?.owner_id ?? null,
-              payload: {
-                agenda_id: decision.agenda_id,
-                decision: decision.decision,
-                model_decision: decision.requested_decision,
-                reason: decision.reason,
-                action_id: decision.action?.id ?? null,
-              },
-            }))
-          }
           let currentProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
           const receipts = []
           const observations = []
@@ -243,25 +285,20 @@ export class TurnRuntime {
             }
             currentProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
           }
-          if (!pendingActions.length) {
-            const lifecycle = this.#applyAgendaLifecycle({
-              projection: currentProjection, conversationId, branchId, commandId, loopId: loop.id, story,
-            })
-            appended.push(...lifecycle.events)
-            currentProjection = lifecycle.projection
-          }
           resultState = {
             ...resultState,
             plan,
-            speakers: plan.speakers,
+            participants: plan.participants,
             messages: [],
             receipts,
             observations,
             pending_actions: pendingActions,
-            context_manifests: { control: controlContext.manifest, narration: {} },
+            after_pending_phase: 'character_runtime',
+            activated_lore_ids: controlContext.activatedLore.map(entry => String(entry.id ?? entry.key)),
+            context_manifests: { control: controlContext.manifest, character: {}, narration: {} },
           }
           const nextStatus = pendingActions.length ? 'suspended' : 'running'
-          const nextPhase = pendingActions.length ? 'actions_pending' : 'narration'
+          const nextPhase = pendingActions.length ? 'actions_pending' : 'character_runtime'
           this.#updateLoop(loop.id, { status: nextStatus, phase: nextPhase, stepCount: executableActions.length, result: resultState, error: {} })
           if (pendingActions.length) appended.push(this.#event({
             conversationId, branchId, commandId, correlationId: loop.id, type: 'control.loop.suspended',
@@ -285,54 +322,307 @@ export class TurnRuntime {
         if (loop.phase === 'actions_pending') return this.#result({ conversation, loop, resultState, usage, events: resumed.events, status: 'suspended' })
       } else resultState = { ...resultState, ...loop.result }
 
+      if (loop.phase === 'character_runtime') {
+        activePhase = 'character_runtime'
+        const participantIds = resultState.participants
+          ?? (resultState.speakers ?? []).filter(item => item !== 'narrator' && item !== 'assistant')
+          ?? []
+        const memberById = new Map(activeCast.map(member => [member.character_id, member]))
+        const existingPlans = new Map((resultState.character_plans ?? []).map(plan => [plan.character_id, plan]))
+        const missingMembers = participantIds.map(participantId => memberById.get(participantId)).filter(member => member && !existingPlans.has(member.character_id))
+
+        if (missingMembers.length) {
+          const projection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
+          const turnReceiptIds = (resultState.receipts ?? []).map(receipt => receipt.action_id)
+          const actorResults = await Promise.all(missingMembers.map(async member => {
+            const characterContext = this.contextBuilder.buildCharacter({
+              conversation, story, persona, cast: activeCast, projection, member,
+              userMessage: runtimeContent, turnReceiptIds, attachments, actionRegistry,
+            })
+            let providerResult = null
+            const providerAttempts = []
+            const decodePlan = result => {
+              if (wasTruncated(result)) throw outputError(`The AI service stopped while ${member.character.name} was deciding how to respond.`, 'model_output_truncated')
+              const parsedPlan = safeJsonObject(result.content)
+              if (!parsedPlan) throw outputError(`The AI service returned an invalid Character plan for ${member.character.name}.`, 'invalid_model_output')
+              return normalizeCharacterPlan(parsedPlan, {
+                actionRegistry,
+                member,
+                activeAgendas: characterContext.activeAgendas,
+                allowedEventIds: characterContext.allowedEventIds,
+                allowedRelationshipTargets: activeCast.map(candidate => candidate.character_id),
+                previousState: characterContext.currentState,
+              })
+            }
+            try {
+              providerResult = await this.#complete(conversation, characterContext.messages, effectiveIntensity, controller.signal, { phase: 'character', attachments })
+              const plan = decodePlan(providerResult)
+              providerAttempts.push({ result: providerResult, outcome: 'completed', error: null })
+              return { member, characterContext, providerAttempts, plan, error: null }
+            } catch (error) {
+              if (providerResult) providerAttempts.push({ result: providerResult, outcome: 'failed', error })
+              const retryableContractFailure = providerResult
+                && error.code !== 'model_output_truncated'
+                && (error.status === 502 || /^invalid_|^character_identity_/.test(String(error.code ?? '')))
+              if (!retryableContractFailure || controller.signal.aborted) {
+                return { member, characterContext, providerAttempts, plan: null, error }
+              }
+              providerAttempts.at(-1).outcome = 'discarded_invalid_character_output'
+              const correctionMessages = [
+                ...characterContext.messages,
+                {
+                  role: 'system',
+                  content: `CHARACTER PLAN CORRECTION REQUIRED\nThe discarded response was not a valid plan for ${member.character.name}: ${error.message}\nReturn exactly one complete, non-empty JSON object matching the required Character decision contract. Do not narrate prose outside JSON and do not decide for any other Character or the player.`,
+                },
+              ]
+              let retryResult = null
+              try {
+                retryResult = await this.#complete(conversation, correctionMessages, effectiveIntensity, controller.signal, { phase: 'character', attachments, jsonMode: false })
+                const plan = decodePlan(retryResult)
+                providerAttempts.push({ result: retryResult, outcome: 'completed_after_character_retry', error: null })
+                return { member, characterContext, providerAttempts, plan, error: null }
+              } catch (retryError) {
+                if (retryResult) providerAttempts.push({ result: retryResult, outcome: 'failed', error: retryError })
+                const safeFallback = retryResult
+                  && retryError.code !== 'model_output_truncated'
+                  && (retryError.status === 502 || /^invalid_|^character_identity_/.test(String(retryError.code ?? '')))
+                if (safeFallback) {
+                  const plan = {
+                    ...normalizeCharacterPlan({
+                      character_id: member.character_id,
+                      participation: 'observe',
+                      perceived_event_ids: characterContext.allowedEventIds.slice(-8),
+                      belief_updates: [],
+                      emotional_state: characterContext.currentState.emotional_state,
+                      relationship_shifts: [],
+                      intent: 'Observe the verified outcome and withhold action until the next beat.',
+                      agenda_decisions: characterContext.activeAgendas.map(agenda => ({
+                        agenda_id: agenda.id,
+                        decision: 'defer',
+                        reason: 'No independent action is taken in this beat.',
+                      })),
+                      spontaneous_actions: [],
+                      speech_act: null,
+                      public_cue: '',
+                    }, {
+                      actionRegistry,
+                      member,
+                      activeAgendas: characterContext.activeAgendas,
+                      allowedEventIds: characterContext.allowedEventIds,
+                      allowedRelationshipTargets: activeCast.map(candidate => candidate.character_id),
+                      previousState: characterContext.currentState,
+                    }),
+                    contract_fallback: true,
+                  }
+                  return { member, characterContext, providerAttempts, plan, error: null, contractFallback: true }
+                }
+                return { member, characterContext, providerAttempts, plan: null, error: retryError }
+              }
+            }
+          }))
+
+          const failures = []
+          for (const actorResult of actorResults) {
+            for (const attempt of actorResult.providerAttempts) {
+              addUsage(usage, attempt.result)
+              this.#recordUsage({
+                conversation, turnUid, commandId, loopId: loop.id, branchId,
+                providerResult: attempt.result,
+                phase: `character:${actorResult.member.character_id}`,
+                outcome: attempt.outcome,
+                error: attempt.error,
+              })
+            }
+            if (actorResult.plan) {
+              existingPlans.set(actorResult.plan.character_id, actorResult.plan)
+              resultState.context_manifests.character[actorResult.plan.character_id] = {
+                ...actorResult.characterContext.manifest,
+                contract_guard: {
+                  retry_count: Math.max(0, actorResult.providerAttempts.length - 1),
+                  fallback: Boolean(actorResult.contractFallback),
+                },
+              }
+              resultState.activated_lore_ids = [...new Set([
+                ...(resultState.activated_lore_ids ?? []),
+                ...actorResult.characterContext.activatedLore.map(entry => String(entry.id ?? entry.key)),
+              ])]
+            } else failures.push(actorResult.error)
+          }
+          activeProviderResult = null
+          activeUsageRecorded = true
+          resultState.character_plans = [...existingPlans.values()]
+          this.#updateLoop(loop.id, {
+            status: failures.length ? 'suspended' : 'running',
+            phase: 'character_runtime',
+            stepCount: loop.step_count,
+            result: resultState,
+            error: failures.length ? { code: failures[0]?.code ?? 'character_runtime_failed', message: failures[0]?.message ?? 'A Character runtime failed.' } : {},
+          })
+          loop = this.getRun(loop.id)
+          if (failures.length) throw failures[0]
+        }
+
+        const characterPlans = participantIds.map(participantId => existingPlans.get(participantId)).filter(Boolean)
+        const characterActions = characterPlans.flatMap(plan => plan.actions ?? [])
+        if (characterActions.length > MAX_CONTROL_STEPS) {
+          throw outputError(`The Character runtimes proposed ${characterActions.length} Actions; the operational limit is ${MAX_CONTROL_STEPS}.`, 'character_plan_too_large')
+        }
+        this.db.transaction(() => {
+          const appended = []
+          let currentProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
+          for (const plan of characterPlans) {
+            const member = memberById.get(plan.character_id)
+            if (!currentProjection.characterStates?.[plan.character_id]) {
+              appended.push(this.#event({
+                conversationId, branchId, commandId, correlationId: loop.id,
+                type: 'character.runtime.initialized', actorId: plan.character_id,
+                payload: initialCharacterRuntimeState(member),
+              }))
+              currentProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
+            }
+            appended.push(this.#event({
+              conversationId, branchId, commandId, correlationId: loop.id,
+              type: 'character.deliberated', actorId: plan.character_id,
+              payload: {
+                character_id: plan.character_id,
+                turn_uid: turnUid,
+                participation: plan.participation,
+                perceived_event_ids: plan.perceived_event_ids,
+                belief_updates: plan.belief_updates,
+                emotional_state: plan.emotional_state,
+                relationship_shifts: plan.relationship_shifts,
+                intent: plan.intent,
+                disclosures: plan.disclosures,
+                public_cue: plan.public_cue,
+              },
+            }))
+            for (const decision of plan.agenda_decisions) {
+              appended.push(this.#event({
+                conversationId, branchId, commandId, correlationId: loop.id, type: 'agenda.evaluated',
+                actorId: plan.character_id,
+                payload: {
+                  agenda_id: decision.agenda_id,
+                  decision: decision.decision,
+                  model_decision: decision.decision,
+                  reason: decision.reason,
+                  action_id: decision.action?.id ?? null,
+                },
+              }))
+            }
+          }
+
+          const receipts = [...(resultState.receipts ?? [])]
+          const observations = [...(resultState.observations ?? [])]
+          for (const action of characterActions) {
+            const proposed = this.#event({
+              conversationId, branchId, commandId, correlationId: loop.id, type: 'action.proposed',
+              actorId: action.actor_id, payload: action,
+            })
+            appended.push(proposed)
+            const resolution = actionRegistry.resolve(action, currentProjection)
+            const receiptEvent = this.#event({
+              conversationId, branchId, commandId, correlationId: loop.id, causationId: proposed.event_uid,
+              type: resolution.status === 'resolved' ? 'action.resolved' : 'action.rejected',
+              actorId: action.actor_id, payload: resolution.receipt,
+            })
+            appended.push(receiptEvent)
+            receipts.push(resolution.receipt)
+            for (const observation of resolution.observations) {
+              appended.push(this.#event({
+                conversationId, branchId, commandId, correlationId: loop.id, causationId: receiptEvent.event_uid,
+                type: 'observation.created', actorId: observation.actor_id, payload: observation,
+              }))
+              observations.push(observation)
+            }
+            currentProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
+          }
+          const lifecycle = this.#applyAgendaLifecycle({
+            projection: currentProjection, conversationId, branchId, commandId, loopId: loop.id, story,
+          })
+          appended.push(...lifecycle.events)
+          resultState = { ...resultState, character_plans: characterPlans, receipts, observations, character_runtime_committed: true }
+          this.#updateLoop(loop.id, {
+            status: 'running', phase: 'narration',
+            stepCount: Number(loop.step_count) + characterPlans.length + characterActions.length,
+            result: resultState, error: {},
+          })
+          return appended
+        })
+        loop = this.getRun(loop.id)
+      }
+
       if (loop.phase === 'narration') {
         activePhase = 'narration'
-        const existingSpeakerIds = new Set((resultState.messages ?? []).map(message => message.character_id))
-        for (const speakerId of resultState.speakers ?? []) {
-          if (existingSpeakerIds.has(speakerId)) continue
-          activePhase = `narration:${speakerId}`
+        if (!(resultState.messages ?? []).length) {
+          const participantIds = resultState.participants
+            ?? (resultState.speakers ?? []).filter(item => item !== 'narrator' && item !== 'assistant')
+            ?? []
+          const transformActorId = participantIds.length === 1 ? participantIds[0] : 'narrator'
+          activePhase = 'narration:storyteller'
           const projection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
           const narrationContext = this.contextBuilder.buildNarration({
-            conversation, story, persona, cast: activeCast, projection, actorId: speakerId,
-            userMessage: content, turnReceiptIds: (resultState.receipts ?? []).map(receipt => receipt.action_id),
+            conversation, story, persona, cast: activeCast, projection, participantIds,
+            characterPlans: resultState.character_plans ?? [],
+            userMessage: runtimeContent, turnReceiptIds: (resultState.receipts ?? []).map(receipt => receipt.action_id), attachments,
           })
-          activeProviderResult = await this.#complete(conversation, narrationContext.messages, effectiveIntensity, controller.signal, { phase: 'narration' })
+          resultState.activated_lore_ids = [...new Set([
+            ...(resultState.activated_lore_ids ?? []),
+            ...narrationContext.activatedLore.map(entry => String(entry.id ?? entry.key)),
+          ])]
+          activeProviderResult = await this.#complete(conversation, narrationContext.messages, effectiveIntensity, controller.signal, { phase: 'narration', attachments })
           addUsage(usage, activeProviderResult)
           activeUsageRecorded = false
-          if (wasTruncated(activeProviderResult)) throw outputError(`The AI service stopped while rendering ${narrationContext.actorName}. Facts are safely committed and narration can be resumed.`, 'model_output_truncated')
-          let message = normalizeNarration(activeProviderResult.content, speakerId)
+          if (wasTruncated(activeProviderResult)) throw outputError('The AI service stopped while rendering the Storyteller beat. Facts are safely committed and narration can be resumed.', 'model_output_truncated')
+          let message = null
           let usageResultToRecord = activeProviderResult
           let usageOutcome = 'completed'
           let causalRetryCount = 0
           let causalFallback = false
-          let conflict = narrationContradiction(message.content, projection, resultState.receipts ?? [])
+          let discardedOutcome = 'discarded_causal_conflict'
+          let conflict = null
+          try {
+            message = transformedSceneOutput({ story, raw: activeProviderResult.content,
+              participantIds: narrationContext.participantIds,
+              characterPlans: resultState.character_plans ?? [],
+              cast: activeCast,
+              narratorActorId: transformActorId,
+            })
+            message.participant_ids = narrationContext.participantIds
+            conflict = narrationContradiction(message.content, projection, resultState.receipts ?? [])
+              ?? narrationAutonomyConflict(message.content, runtimeContent)
+              ?? narrationPrivateLeak(message.content, narrationContext.protectedPrivateFragments)
+          } catch (error) {
+            if (!['invalid_scene_output', 'invalid_model_output'].includes(error.code)) throw error
+            discardedOutcome = 'discarded_invalid_scene_output'
+            conflict = `The draft was not a valid Scene Block response: ${error.message}`
+          }
 
           if (conflict) {
             this.#recordUsage({
               conversation, turnUid, commandId, loopId: loop.id, branchId,
               providerResult: activeProviderResult,
-              phase: `narration:${speakerId}:draft`,
-              outcome: 'discarded_causal_conflict',
+              phase: 'narration:storyteller:draft',
+              outcome: discardedOutcome,
             })
             activeUsageRecorded = true
             usageResultToRecord = null
             causalRetryCount = 1
-            this.logger.warn('narration.causal_conflict', {
-              conversation_id: conversationId, loop_id: loop.id, command_id: commandId, speaker_id: speakerId,
+            this.logger.warn(discardedOutcome === 'discarded_invalid_scene_output' ? 'narration.scene_output_invalid' : 'narration.causal_conflict', {
+              conversation_id: conversationId, loop_id: loop.id, command_id: commandId, participant_ids: narrationContext.participantIds,
             })
 
             const correctionMessages = [
               ...narrationContext.messages,
               {
                 role: 'system',
-                content: `CAUSAL CORRECTION REQUIRED\nThe discarded draft contradicted committed state: ${conflict}\nRegenerate the complete user-visible prose from the verified Observations and current authoritative state. Do not mention this correction or invent any additional transition.`,
+                content: `STORYTELLER CORRECTION REQUIRED\nThe discarded draft violated a protected narration boundary: ${conflict}\nRegenerate the complete JSON Scene Block object from the verified Observations, Character Performance Briefs and current authoritative state. Do not mention this correction, invent any additional transition, expose unauthorized private text, or assign the player an unrequested action, speech, thought, feeling, memory, decision, or movement.`,
               },
             ]
             let corrected = null
             let correctionFailure = null
             try {
-              activePhase = `narration:${speakerId}:causal-retry`
-              activeProviderResult = await this.#complete(conversation, correctionMessages, effectiveIntensity, controller.signal, { phase: 'narration' })
+              activePhase = 'narration:storyteller:causal-retry'
+              activeProviderResult = await this.#complete(conversation, correctionMessages, effectiveIntensity, controller.signal, { phase: 'narration', attachments })
               addUsage(usage, activeProviderResult)
               activeUsageRecorded = false
               usageResultToRecord = activeProviderResult
@@ -340,8 +630,16 @@ export class TurnRuntime {
                 correctionFailure = 'The correction response was truncated.'
               } else {
                 try {
-                  corrected = normalizeNarration(activeProviderResult.content, speakerId)
+                  corrected = transformedSceneOutput({ story, raw: activeProviderResult.content,
+                    participantIds: narrationContext.participantIds,
+                    characterPlans: resultState.character_plans ?? [],
+                    cast: activeCast,
+                    narratorActorId: transformActorId,
+                  })
+                  corrected.participant_ids = narrationContext.participantIds
                   correctionFailure = narrationContradiction(corrected.content, projection, resultState.receipts ?? [])
+                    ?? narrationAutonomyConflict(corrected.content, runtimeContent)
+                    ?? narrationPrivateLeak(corrected.content, narrationContext.protectedPrivateFragments)
                 } catch (error) {
                   correctionFailure = error.message
                 }
@@ -358,14 +656,16 @@ export class TurnRuntime {
               usageOutcome = 'completed_after_causal_retry'
             } else {
               message = {
-                character_id: speakerId,
+                character_id: 'narrator',
                 content: canonicalNarration(narrationContext.observations),
+                scene_blocks: [{ type: 'narration', content: canonicalNarration(narrationContext.observations) }],
+                participant_ids: narrationContext.participantIds,
                 causal_fallback: true,
               }
               causalFallback = true
               usageOutcome = 'causal_observation_fallback'
               this.logger.warn('narration.causal_fallback', {
-                conversation_id: conversationId, loop_id: loop.id, command_id: commandId, speaker_id: speakerId,
+                conversation_id: conversationId, loop_id: loop.id, command_id: commandId, participant_ids: narrationContext.participantIds,
                 correction_failure: correctionFailure || 'causal_conflict',
               })
             }
@@ -375,24 +675,27 @@ export class TurnRuntime {
           message.causal_fallback = causalFallback
           this.db.transaction(() => {
             this.#event({
-              conversationId, branchId, commandId, correlationId: loop.id, type: 'message.rendered', actorId: speakerId,
-              idempotencyKey: `${loop.id}:message:${speakerId}`,
+              conversationId, branchId, commandId, correlationId: loop.id, type: 'message.rendered', actorId: 'narrator',
+              idempotencyKey: `${loop.id}:message:storyteller`,
               payload: {
                 content: message.content,
                 metadata: {
                   turn_uid: turnUid,
                   command_id: commandId,
-                  character_id: speakerId,
+                  character_id: 'narrator',
+                  participant_ids: narrationContext.participantIds,
+                  activated_lore_ids: resultState.activated_lore_ids,
                   configured_thinking_intensity: conversation.thinking_intensity,
                   effective_thinking_intensity: effectiveIntensity,
                   causal_runtime: true,
                   causal_retry_count: causalRetryCount,
                   causal_fallback: causalFallback,
+                  scene_blocks: message.scene_blocks,
                 },
               },
             })
             resultState.messages = [...(resultState.messages ?? []), message]
-            resultState.context_manifests.narration[speakerId] = {
+            resultState.context_manifests.narration.storyteller = {
               ...narrationContext.manifest,
               causal_guard: { retry_count: causalRetryCount, fallback: causalFallback },
             }
@@ -401,7 +704,7 @@ export class TurnRuntime {
           if (usageResultToRecord) {
             this.#recordUsage({
               conversation, turnUid, commandId, loopId: loop.id, branchId,
-              providerResult: usageResultToRecord, phase: `narration:${speakerId}`, outcome: usageOutcome,
+              providerResult: usageResultToRecord, phase: 'narration:storyteller', outcome: usageOutcome,
             })
             activeUsageRecorded = true
           }
@@ -411,6 +714,20 @@ export class TurnRuntime {
 
       const completedEvents = this.db.transaction(() => {
         const appended = []
+        const preSummaryProjection = reduceEvents(this.repository.events(conversationId, branchId), story?.initial_state ?? {})
+        const turnActionIds = new Set((resultState.receipts ?? []).map(receipt => receipt.action_id))
+        const visibleTurnObservations = visibleObservations(preSummaryProjection, 'user')
+          .filter(item => turnActionIds.has(item.action_id))
+        const continuitySummary = rollContinuitySummary(preSummaryProjection.summary, {
+          turnNumber: preSummaryProjection.turnCount + 1,
+          userMessage: content,
+          narration: resultState.messages?.at(-1)?.content ?? '',
+          observations: visibleTurnObservations,
+        })
+        appended.push(this.#event({
+          conversationId, branchId, commandId, correlationId: loop.id, type: 'summary.updated',
+          payload: { summary: continuitySummary, source: 'deterministic-rolling-v1' },
+        }))
         appended.push(this.#event({
           conversationId, branchId, commandId, correlationId: loop.id, type: 'turn.completed',
           payload: {
@@ -442,6 +759,9 @@ export class TurnRuntime {
       })
       const completedLoop = this.getRun(loop.id)
       const final = { ...completedLoop.result, events: completedEvents }
+      try { this.retrievalIndex?.indexConversation(conversationId, branchId) } catch (error) {
+        this.logger.warn('retrieval.index.failed', { conversation_id: conversationId, error: error.message })
+      }
       this.logger.info('control.loop.completed', {
         conversation_id: conversationId, loop_id: loop.id, command_id: commandId,
         actions: resultState.receipts?.length ?? 0, messages: resultState.messages?.length ?? 0,
@@ -499,11 +819,12 @@ export class TurnRuntime {
     }
   }
 
-  #findOrCreateLoop({ conversation, branchId, content, idempotencyKey, resumeRunId, story, cast }) {
+  #findOrCreateLoop({ conversation, branchId, content, attachments = [], idempotencyKey, resumeRunId, story, cast }) {
     if (resumeRunId) {
       const loop = this.getRun(resumeRunId)
       assert(loop.conversation_id === conversation.id && loop.branch_id === branchId, 'Control loop does not belong to the active timeline', 409, 'loop_timeline_mismatch')
       assert(loop.input.content === content, 'Resume content does not match the persisted command', 409, 'loop_command_mismatch')
+      assert(JSON.stringify(loop.input.attachment_ids ?? []) === JSON.stringify(attachments.map(item => item.id)), 'Resume attachments do not match the persisted command', 409, 'loop_command_mismatch')
       return loop
     }
     if (idempotencyKey) {
@@ -514,6 +835,7 @@ export class TurnRuntime {
         const loop = publicLoop(this.db.raw.prepare('SELECT * FROM control_loop_runs WHERE command_id = ?').get(command.id))
         if (loop) {
           assert(loop.input.content === content, 'Idempotency key was already used for a different command', 409, 'idempotency_conflict')
+          assert(JSON.stringify(loop.input.attachment_ids ?? []) === JSON.stringify(attachments.map(item => item.id)), 'Idempotency key was already used with different attachments', 409, 'idempotency_conflict')
           return loop
         }
       }
@@ -523,13 +845,14 @@ export class TurnRuntime {
     const turnUid = id('turn')
     const timestamp = new Date().toISOString()
     const projection = reduceEvents(this.repository.events(conversation.id, branchId), story?.initial_state ?? {})
+    assert(attachments.every(item => !item.message_event_uid), 'An attachment has already been sent', 409, 'attachment_already_used')
     const agendas = Object.keys(projection.agendas).length ? [] : normalizeStoryAgendas(story, cast)
     this.db.transaction(() => {
       for (const agenda of agendas) this.#event({ conversationId: conversation.id, branchId, type: 'agenda.created', actorId: agenda.owner_id, payload: agenda })
       this.db.raw.prepare(`
         INSERT INTO control_loop_runs(id, conversation_id, branch_id, command_id, status, phase, step_count, input_json, result_json, error_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'running', 'interpretation', 0, ?, ?, '{}', ?, ?)
-      `).run(loopId, conversation.id, branchId, commandId, stableStringify({ content, idempotency_key: idempotencyKey }), stableStringify({ turn_uid: turnUid }), timestamp, timestamp)
+      `).run(loopId, conversation.id, branchId, commandId, stableStringify({ content, attachment_ids: attachments.map(item => item.id), idempotency_key: idempotencyKey }), stableStringify({ turn_uid: turnUid }), timestamp, timestamp)
       this.#event({
         conversationId: conversation.id, branchId, commandId, correlationId: loopId, type: 'turn.started',
         idempotencyKey: idempotencyKey ? `${idempotencyKey}:turn` : null,
@@ -540,11 +863,12 @@ export class TurnRuntime {
         idempotencyKey: idempotencyKey ? `${idempotencyKey}:command` : null,
         payload: { id: commandId, actor_id: 'user', content, expected_state_revision: projection.stateRevision },
       })
-      this.#event({
+      const userEvent = this.#event({
         conversationId: conversation.id, branchId, commandId, correlationId: loopId, type: 'user.message', actorId: 'user',
         idempotencyKey: idempotencyKey ? `${idempotencyKey}:user` : null,
-        payload: { content, metadata: { turn_uid: turnUid, loop_id: loopId, command_id: commandId, causal_runtime: true } },
+        payload: { content, metadata: { turn_uid: turnUid, loop_id: loopId, command_id: commandId, causal_runtime: true, attachments: attachments.map(({ data_base64: _data, extracted_text: _text, message_event_uid: _event, ...item }) => item) } },
       })
+      this.assets?.attach(attachments.map(item => item.id), userEvent.event_uid)
     })
     return this.getRun(loopId)
   }
@@ -574,7 +898,8 @@ export class TurnRuntime {
         }
         projection = reduceEvents(this.repository.events(conversation.id, loop.branch_id), story?.initial_state ?? {})
       }
-      if (!remaining.length) {
+      const nextPhase = loop.result.after_pending_phase ?? 'narration'
+      if (!remaining.length && nextPhase === 'narration') {
         const lifecycle = this.#applyAgendaLifecycle({
           projection, conversationId: conversation.id, branchId: loop.branch_id,
           commandId: loop.command_id, loopId: loop.id, story,
@@ -585,7 +910,7 @@ export class TurnRuntime {
       const resultState = { ...loop.result, receipts, observations, pending_actions: remaining }
       this.#updateLoop(loop.id, {
         status: remaining.length ? 'suspended' : 'running',
-        phase: remaining.length ? 'actions_pending' : 'narration',
+        phase: remaining.length ? 'actions_pending' : nextPhase,
         stepCount: Number(loop.step_count) + executable.length,
         result: resultState,
         error: {},
@@ -597,8 +922,8 @@ export class TurnRuntime {
     return { loop: next, resultState: next.result, events }
   }
 
-  async #complete(conversation, messages, intensity, signal, { phase = 'control' } = {}) {
-    return this.providers.complete({
+  async #complete(conversation, messages, intensity, signal, { phase = 'control', attachments = [], jsonMode = null } = {}) {
+    const providerResult = await this.providers.complete({
       model: conversation.model_id,
       messages,
       // Reasoning strength controls causal planning. Once receipts exist,
@@ -610,13 +935,18 @@ export class TurnRuntime {
       temperature: conversation.generation?.temperature ?? 0.8,
       topP: conversation.generation?.top_p ?? 1,
       generation: conversation.generation,
-      jsonMode: phase === 'control',
+      jsonMode: jsonMode ?? ['control', 'character', 'narration'].includes(phase),
       route: conversation.route,
+      attachments,
     }, {
       connectionId: conversation.connection_id,
       accountConnectionId: conversation.account_connection_id,
       signal,
     })
+    return {
+      ...providerResult,
+      promptCharacters: messages.reduce((total, message) => total + String(message?.content ?? '').length, 0),
+    }
   }
 
   #applyAgendaLifecycle({ projection, conversationId, branchId, commandId, loopId, story }) {

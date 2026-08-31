@@ -76,6 +76,20 @@
     "prompt_graph": {
       "type": "object"
     },
+    "transforms": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/transform"
+      }
+    },
+    "automations": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/automation"
+      }
+    },
     "state_visibility": {
       "type": "array",
       "maxItems": 500,
@@ -263,8 +277,25 @@
           "maxLength": 10000
         },
         "metadata": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "actor_runtime": { "$ref": "#/$defs/actorRuntime" }
+          },
+          "additionalProperties": true
         }
+      },
+      "additionalProperties": false
+    },
+    "actorRuntime": {
+      "type": "object",
+      "properties": {
+        "initiative": { "enum": ["reactive", "balanced", "proactive"] },
+        "initial_presence": { "enum": ["present", "nearby", "off_scene"] },
+        "drives": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 1000 } },
+        "fears": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 1000 } },
+        "values": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 1000 } },
+        "mannerisms": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 1000 } },
+        "reveal_policy": { "type": "string", "maxLength": 3000 }
       },
       "additionalProperties": false
     },
@@ -356,6 +387,50 @@
         "pause_when": { "type": "array", "maxItems": 100, "items": { "type": "object" } },
         "resume_when": { "type": "array", "maxItems": 100, "items": { "type": "object" } },
         "visibility": { "enum": ["public", "private", "director"] },
+        "extensions": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "transform": {
+      "type": "object",
+      "required": ["key", "pattern", "replacement", "stages"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "name": { "type": "string", "maxLength": 200 },
+        "pattern": { "type": "string", "maxLength": 2000 },
+        "flags": { "type": "string", "pattern": "^[dgimsuvy]*$", "maxLength": 10 },
+        "replacement": { "type": "string", "maxLength": 20000 },
+        "stages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "enum": ["user_input", "model_input", "model_output", "display", "lore"] }
+        },
+        "actor": { "type": "string", "maxLength": 160 },
+        "enabled": { "type": "boolean" },
+        "source": { "type": "string", "maxLength": 160 },
+        "trim_strings": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 1000 } },
+        "substitute_regex": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "min_depth": { "type": ["integer", "null"], "minimum": -1, "maximum": 9999 },
+        "max_depth": { "type": ["integer", "null"], "minimum": -1, "maximum": 9999 },
+        "run_on_edit": { "type": "boolean" },
+        "extensions": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "automation": {
+      "type": "object",
+      "required": ["key", "trigger", "prompt"],
+      "properties": {
+        "key": { "$ref": "#/$defs/key" },
+        "name": { "type": "string", "maxLength": 200 },
+        "trigger": { "enum": ["control", "character", "narration", "prompt.control", "prompt.character", "prompt.narration"] },
+        "prompt": { "type": "string", "maxLength": 30000 },
+        "role": { "enum": ["system", "user", "assistant"] },
+        "priority": { "type": "number", "minimum": 0, "maximum": 100 },
+        "order": { "type": "number" },
+        "enabled": { "type": "boolean" },
         "extensions": { "type": "object" }
       },
       "additionalProperties": false

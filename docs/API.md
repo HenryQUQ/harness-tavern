@@ -8,7 +8,8 @@ All endpoints return JSON unless otherwise noted. When `HT_ACCESS_TOKEN` is conf
 |---|---|---|
 | GET | `/api/health` | Liveness, version, database integrity |
 | GET | `/api/bootstrap` | Player/creator bootstrap data |
-| GET | `/api/home` | Continue items, Characters, and Stories |
+| GET | `/api/home` | Continue items and Stories |
+| GET | `/api/usage` | Aggregate provider token/cost activity and local retrieval-index health |
 | GET | `/api/user-profile` | Local owner profile and onboarding state |
 | PATCH | `/api/user-profile` | Name, locale, default Persona, onboarding |
 
@@ -16,38 +17,47 @@ Each item in `GET /api/bootstrap` → `conversations` includes a player-safe `gr
 
 ```json
 {
-  "kind": "character",
-  "id": "character-or-ensemble-identity",
-  "title": "Visible group name",
-  "subtitle": "Character chat",
+  "kind": "story",
+  "id": "story-id",
+  "title": "Visible Story title",
+  "subtitle": "Story playthrough",
   "cast": [{ "id": "character-id", "name": "Visible name", "avatar_url": "" }]
 }
 ```
 
-`kind` is `character` or `story`. Story summaries use the Story identity and may include `cover_url`; no private Cast context, private Lore, or creator-only state is included.
+`kind` is always `story`. Summaries use the Story identity and may include `cover_url`; no private Cast context, private Lore, or creator-only state is included. Bootstrap and Home do not expose a top-level Character collection.
 
 ## Library content framework
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/library/content-types` | Discover core content kinds, minimum required fields, editable model, and portable formats |
-| POST | `/api/library/items` | Add an explicit Character or Story structure to the Library |
+| POST | `/api/library/items` | Add an explicit Story, including optional nested Cast, to the Library |
 
 The write contract is deliberately narrow:
 
 ```json
 {
-  "kind": "character",
+  "kind": "story",
   "content": {
-    "name": "Explicit name",
-    "description": "Explicit description"
+    "title": "The Last Night Train",
+    "cast": [{
+      "client_id": "iona",
+      "role": "Conductor",
+      "character": {
+        "name": "Iona Reed",
+        "first_message": "The last train is waiting."
+      }
+    }]
   }
 }
 ```
 
-`kind` and `content` are the only accepted top-level keys. The service may add empty structural defaults required by a standard file, but it does not expand briefs, prompts, template selectors, or creative instructions. Character creation requires `content.name`; Story creation requires `content.title` and at least one existing Character reference in `content.cast`.
+`kind` and `content` are the only accepted top-level keys. `kind` must be `story`; `content.title` is the only required authored field. `content.cast` may be empty, reference an internal Actor with `character_id`, or define a new actor in `character`. `client_id` lets unsaved Cast entries be referenced by Scenes or Runtime fields in the same request. The service may add empty structural defaults required by the source schema, but it does not expand briefs, prompts, template selectors, or creative instructions.
 
-## Characters and Personas
+## Internal Actor compatibility and Personas
+
+Actor routes remain available for source mapping, old integrations, and SillyTavern compatibility. They are not advertised by Library content types or used as a top-level browser lifecycle. New clients should create and edit Cast through Story routes.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -57,7 +67,7 @@ The write contract is deliberately narrow:
 | DELETE | `/api/characters/:id` | Delete unused Character |
 | POST | `/api/personas` | Create Persona |
 | PATCH | `/api/personas/:id` | Update Persona |
-| POST | `/api/favorites` | Favorite/unfavorite an entity using `entity_type`, `entity_id`, and `favorite` |
+| POST | `/api/favorites` | Favorite/unfavorite a Story or Conversation using `entity_type`, `entity_id`, and `favorite` |
 
 ## Stories and Playthroughs
 
@@ -71,16 +81,20 @@ The write contract is deliberately narrow:
 | PUT | `/api/story-sources/:id` | Validate `source`, check optional `expected_digest`, write bound files, and rebuild the runtime projection |
 | POST | `/api/playthroughs` | Select Persona/player role and begin Story |
 
+The Playthrough request accepts an optional `route.opening_greeting_index` (or per-actor `greeting_indices`) to select a Character Card alternate greeting. Openings expand supported Story, Persona, Actor, and projected-state macros before they become events.
+
+`runtime` in the private Story model may contain `transforms` and `automations` alongside Actions, Agendas, Prompt Graph, World Schema, and State Visibility. Transforms are declarative regex replacements with an `actor`, `stages`, `pattern`, `flags`, `replacement`, and `enabled` flag. Valid stages are `user_input`, `model_input`, `model_output`, and `display`. Automations inject authored prompt text at `control`, isolated `character`, or `narration`; neither construct executes JavaScript.
+
 ## Conversations and Timelines
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/conversations` | Start Character chat or general chat |
+| POST | `/api/conversations` | Retired public direct-chat route; returns 410 `story_playthrough_required` |
 | GET | `/api/conversations/:id` | Conversation, Cast, Journal, projection, branches |
 | PATCH | `/api/conversations/:id` | Title, Persona, AI engine, response settings |
 | DELETE | `/api/conversations/:id` | Permanently delete Conversation, timelines, events, usage, and an orphaned Playthrough |
 | POST | `/api/conversations/:id/turn` | Complete one turn |
-| POST | `/api/conversations/:id/turn/stream` | SSE character response stream |
+| POST | `/api/conversations/:id/turn/stream` | SSE stream for one complete Storyteller beat |
 | POST | `/api/conversations/:id/cancel` | Cancel current provider request |
 | GET | `/api/conversations/:id/control-loops` | Sanitized durable loop history |
 | GET | `/api/control-loops/:id` | Sanitized loop status and context counts |
@@ -89,16 +103,30 @@ The write contract is deliberately narrow:
 | POST | `/api/conversations/:id/branches` | Create What-if Timeline |
 | POST | `/api/conversations/:id/branches/:branchId/switch` | Switch Timeline |
 
+Both turn routes accept `{ "content": "...", "attachment_ids": ["asset-id"], "idempotency_key": "..." }`. `content` may be empty only when at least one attachment is present. One accepted turn produces exactly one narrator-authored message. The Director selects relevant `participants`; each selected Character then plans independently, may act, speak, react, observe, or remain silent, and cannot see another Character's private file. The message includes `scene_blocks` with `narration`, `action`, and authorized `dialogue` blocks. `GET /api/conversations/:id` exposes sanitized `character_runtime` presence and public cues but omits beliefs, private intent, and disclosure contents.
+
+### Conversation attachments
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/conversations/:id/assets` | Upload one allowlisted base64 attachment before sending a turn |
+| GET | `/api/assets/:id` | Read safe attachment metadata and immutable-association status |
+| GET | `/api/assets/:id/content` | Stream attachment bytes with private no-store headers |
+| DELETE | `/api/assets/:id` | Delete an unsent attachment; sent history is immutable |
+
+The upload body is `{ "filename": "clue.md", "mime_type": "text/markdown", "data_base64": "..." }`. Files are limited to 4 MB each; a turn accepts at most four files and 6 MB combined. Images, plain text, Markdown, JSON, PDF, and common browser audio types are allowlisted. Only plain text, Markdown, and JSON are text-extracted. Provider delivery is capability-gated; metadata-only images are never represented to the model as visible pixels.
+
 ## Complete content editors
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/creator/characters/:id` | Complete private Character authoring model, source bindings, and optimistic edit token |
-| PUT | `/api/creator/characters/:id` | Validate and save every authored Character field; update bound Story sources when present |
+| GET | `/api/creator/characters/:id` | Internal compatibility editor model, source bindings, and optimistic edit token |
+| PUT | `/api/creator/characters/:id` | Internal compatibility save; update bound Story sources when present |
 | GET | `/api/creator/stories/:id` | Complete private Story authoring model and canonical source digest |
 | PUT | `/api/creator/stories/:id` | Validate and save Story overview, Cast, Lore, Scenes, causal runtime, metadata, and source files |
+| POST | `/api/creator/stories/:id/runtime-debug` | Explain transformed input, Lore decisions, ranked Actions, context blocks, participants, and retrieval without calling a model |
 
-The complete editor `PUT` routes use an envelope: `{ "character": { ... }, "expected_token": "..." }` or `{ "story": { ... }, "expected_digest": "..." }`. A stale Character token returns `character_edit_conflict`; a stale Story digest returns `story_source_conflict`. This prevents an open browser editor from overwriting newer changes made in another tab or directly in a bound source file. Public Character and Story routes continue to omit creator notes, secrets, private Cast context, initial State, and other author-only fields.
+The Story editor uses `{ "story": { ... }, "expected_digest": "..." }`. It can update existing actors through nested `cast[].character` data and add new ones with `client_id`. `cast[].metadata.actor_runtime` accepts `initiative`, `initial_presence`, `drives`, `fears`, `values`, `mannerisms`, and `reveal_policy`. A stale digest returns `story_source_conflict`, preventing an open browser editor from overwriting newer changes made in another tab or directly in a bound source file. The Actor compatibility editor retains `{ "character": { ... }, "expected_token": "..." }` for old integrations. Public routes omit creator notes, secrets, private Cast context, private Character state, initial State, and other author-only fields.
 
 ### Retired guided-creation compatibility
 
@@ -119,7 +147,7 @@ Existing draft rows are preserved rather than deleted. They are available read-o
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/exports/characters/:id` | Download Character Tavern pack |
+| GET | `/api/exports/characters/:id` | Compatibility export normalized as a single-cast Story pack |
 | GET | `/api/exports/characters/:id?format=sillytavern-v2` | Download Character Card V2 JSON |
 | GET | `/api/exports/characters/:id?format=sillytavern-v3` | Download Character Card V3 JSON |
 | GET | `/api/exports/stories/:id` | Download playable Story Tavern pack |
@@ -179,6 +207,7 @@ Existing provider and account endpoints remain available under:
 ```text
 /api/provider-connections
 /api/provider-connections/:id/models
+/api/provider-connections/:id/test
 /api/provider-connections/:id/openrouter/providers
 /api/account-connections/:connector/begin
 /api/account-connections/:connector/complete
